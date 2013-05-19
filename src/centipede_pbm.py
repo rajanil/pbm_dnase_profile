@@ -517,13 +517,12 @@ def bayes_optimal_estimator(cascade, eta, pi, mu):
 
     return R
 
-def EM(reads, totalreads, scores, null, restarts=3, mintol=1):
+def EM(reads, totalreads, scores, null, model='modelA', restarts=3, mintol=1):
 
     (N,L) = reads.shape
     cascade = Cascade(L)
     cascade.setreads(reads)
     del reads
-    model = 'modelA'
 
     Loglikeres = -np.inf
     restart = 0
@@ -604,6 +603,9 @@ def EM(reads, totalreads, scores, null, restarts=3, mintol=1):
 
                 if model=='modelA':
                     B.update_Mstep(cascade, eta, gamma)
+                elif model=='modelB':
+                    pass
+#                    mu.update_Mstep(cascade, eta, gamma)
                 elif model=='modelC':
                     B.update_Mstep(cascade, eta, gamma, omega=omega)
                     omega.update_Mstep(cascade, gamma, B)
@@ -653,7 +655,7 @@ def EM(reads, totalreads, scores, null, restarts=3, mintol=1):
 
 
                 # likelihood
-                if (iter+1)%10==0:
+                if (iter+1)%1==0:
                     if model=='modelA':
                         Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B)
                     elif model=='modelB':

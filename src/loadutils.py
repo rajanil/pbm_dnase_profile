@@ -479,7 +479,7 @@ def transfac_pwms(background={'A':0.25, 'T':0.25, 'G':0.25, 'C':0.25}):
     datapath = '/data/share/TRANSFAC/pwms/TRANSFAC.2011.3/'
 
     motifs = dict()
-    files = glob.glob(os.path.join(datapath, '*.dat'))
+    files = glob.glob(os.path.join(datapath, 'M*.dat'))
     files.sort()
     for index, file in enumerate(files):
 
@@ -518,7 +518,7 @@ def selex_pwms(background={'A':0.25, 'T':0.25, 'G':0.25, 'C':0.25}):
     datapath = '/data/share/HTSELEX/pwms/'
 
     motifs = dict()
-    files = glob.glob(os.path.join(datapath, '*.dat'))
+    files = glob.glob(os.path.join(datapath, 'S*.dat'))
     files.sort()
     for index, file in enumerate(files):
 

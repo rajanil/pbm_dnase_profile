@@ -15,7 +15,7 @@ allsamples = 'NA18505 NA18507 NA18508 NA18516 NA18522 NA19141 NA19193 NA19204 NA
 
 projpath = '/mnt/lustre/home/anilraj/pbm_dnase_profile'
 batch = 200000
-L = 256
+L = 128
 dhs = 0.0
 damp = 0.0 # 0, 0.1
 
@@ -52,6 +52,53 @@ def aggregate(locations, dataobj, width=200):
 
         return mnase_readsum
 
+def in_macs_peak(macs, sites):
+
+    mask = np.zeros((len(sites),),dtype='bool')
+    for index,site in enumerate(sites):
+        chrom = site[0]
+        try:
+            macs_left = np.array(macs[chrom])[:,0]
+            macs_right = np.array(macs[chrom])[:,1]
+        except IndexError:
+            mask[index] = False
+            continue
+
+        if np.logical_and(macs_left<int(site[1]), macs_right>int(site[2])).any():
+            mask[index] = True
+
+    return mask
+
+def compute_chip_auc(chipreads, logodds, macs, locs_tolearn):
+
+    mask = in_macs_peak(macs, locs_tolearn)
+    positive = logodds[mask]
+    negative = logodds[np.logical_not(mask)]
+    U = stats.mannwhitneyu(positive, negative)
+    auc = 1.-U[0]/(positive.size*negative.size)
+    auc = (auc, U[1])
+
+    tpr = compute_sensitivity(positive, negative)
+
+    return auc, tpr
+
+def compute_sensitivity(positive, negative, fpr=0.01):
+
+    labels = np.zeros((positive.size+negative.size,),dtype='int8')
+    labels[:positive.size] = 1
+    values = np.hstack((positive,negative))
+    ordered_values = np.sort(values)[::-1]
+    for val in ordered_values:
+        pos = labels[values>=val]
+        FPR = (pos==0).sum()/float((labels==0).sum())
+        if FPR<fpr:
+            continue
+        else:
+            tpr = (pos==1).sum()/float((labels==1).sum())
+            break
+
+    return tpr
+
 def plotmodel(pwmid, sample=None, pwmbase='transfac'):
 
     if pwmbase=='transfac':
@@ -59,38 +106,48 @@ def plotmodel(pwmid, sample=None, pwmbase='transfac'):
     elif pwmbase=='selex':
         pwms = loadutils.selex_pwms()
 
-    nullmeans = []
+    models = ['modelB']
+    footprints = []
 
-    readobj = loadutils.Dnase(sample=sample)
-    if sample is None:
-        seqobj = loadutils.Sequence(sample)
-        handle = open("%s/cache/combined/pbmcentipede_short_%s.pkl"%(projpath,pwmid),'r')
-    else:
-        if sample=='Gm12878':
-            seqobj = loadutils.Sequence(sample)
+    for model in models:
+        if sample is None:
+            handle = open("%s/cache/combined/pbmcentipede_%s_short_%s.pkl"%(projpath,model,pwmid),'r')
         else:
-            indiv_idx = loadutils.read_individuals()
-            seqobj = loadutils.Sequence(sample, sample_idx=indiv_idx[sample])
-        handle = open("%s/cache/separate/pbmcentipede_short_%s_%s.pkl"%(projpath,pwmid,sample),'r')
+            handle = open("%s/cache/separate/pbmcentipede_%s_short_%s_%s.pkl"%(projpath,model,pwmid,sample),'r')
+        output = cPickle.load(handle)
+        handle.close()
+        footparams = output['footprint'][0]
+        prior = output['prior'][0]
+        alpha, tau = output['negbin'][0]
+        posterior = output['posterior'][0]
+        print pwmid, model, posterior.shape[0], (posterior[:,1]>0.99).sum()
+        print prior, alpha, tau
+        print alpha*(1-tau)/tau
+
+        if model=='modelA':
+            pi = footparams[1]
+            B = footparams[2]
+            for j in xrange(pi.size):
+                B.value[j] = pi[j]*0.5+(1-pi[j])*B.value[j]
+            footprints.append(B.inverse_transform())
+        elif model=='modelB':
+            footprints.append(footparams[0])
+
+    handle = open("/mnt/lustre/home/anilraj/histmod/cache/separate/centipede_short_%s_Gm12878.pkl"%pwmid,'r')
     output = cPickle.load(handle)
     handle.close()
-    footprints = output['footprint']
+    footprint = output['footprint'][0]
+    footprints.append(footprint)
+    print pwmid, 'vanilla', output['posterior'][0].shape[0], (output['posterior'][0][:,1]>0.99).sum()
 
-    for c,ck in enumerate([0]):
-        if ck!=0:
-            seqobj.set_cutrate(sample=sample, k=ck)
-        if ck!=4:
-            prior = output['prior'][c]
-            negbin = output['negbin'][c]
-            posterior = output['posterior'][c]
-            locations = output['locations']
-            print pwmid, ck, posterior.shape[0], (posterior[:,1]>0.99).sum()
-            print prior, negbin
-    readobj.close()
-    seqobj.close()
+    handle = open("/mnt/lustre/home/anilraj/histmod/cache/separate/centipede_damped_short_%s_Gm12878.pkl"%pwmid,'r')
+    output = cPickle.load(handle)
+    handle.close()
+    footprint = output['footprint'][0]
+    footprints.append(footprint)
+    print pwmid, 'damped', output['posterior'][0].shape[0], (output['posterior'][0][:,1]>0.99).sum()
 
     key = [k for k,pwm in pwms.iteritems() if pwm['AC']==pwmid][0]
-    labels = ['quant','poisson_quant']
     if sample is None:
         title = pwms[key]['NA']
         footprintfile = "%s/fig/footprint_short_%s.pdf"%(projpath,pwmid)
@@ -98,8 +155,9 @@ def plotmodel(pwmid, sample=None, pwmbase='transfac'):
         title = "%s / %s"%(pwms[key]['NA'], sample)
         footprintfile = "%s/fig/footprint_short_%s_%s.pdf"%(projpath,pwmid,sample)
 
+    models = ['centipede_PBM','centipede','centipede_damped']
     # plot footprints
-    figure = viz.plot_footprint(footprints, labels=labels, motif=pwms[key]['motif'], title=title)
+    figure = viz.plot_footprint(footprints, labels=models, motif=pwms[key]['motif'], title=title)
     figure.savefig(footprintfile, dpi=300, format='pdf')
 
 def plotbound(pwmid, sample=None, cutk=0, pwmbase='transfac'):
@@ -320,6 +378,7 @@ def infer(pwmid, sample, pwm_thresh=8, pwmbase='transfac', chipseq=False):
 
     import centipede_pbm as centipede
 
+    model = 'modelB'
     if pwmbase=='transfac':
         pwms = loadutils.transfac_pwms()
     elif pwmbase=='selex':
@@ -333,9 +392,9 @@ def infer(pwmid, sample, pwm_thresh=8, pwmbase='transfac', chipseq=False):
         sequence = loadutils.Sequence(sample, sample_idx=indiv_idx[sample])
 
     if sample in ['Gm12878','Gm12878All']:
-        location_file = "%s/cache/%s_locationsGm12878_Q%.1f.txt.gz"%(projpath,pwmid,dhs)
+        location_file = "/mnt/lustre/home/anilraj/histmod/cache/%s_locationsGm12878_Q%.1f.txt.gz"%(pwmid,dhs)
     else:
-        location_file = "%s/cache/%s_locations_Q%.1f.txt.gz"%(projpath,pwmid,dhs)
+        location_file = "/mnt/lustre/home/anilraj/histmod/cache/%s_locations_Q%.1f.txt.gz"%(pwmid,dhs)
 
     # check file size
     pipe = subprocess.Popen("zcat %s | wc -l"%location_file, stdout=subprocess.PIPE, shell=True)
@@ -344,7 +403,7 @@ def infer(pwmid, sample, pwm_thresh=8, pwmbase='transfac', chipseq=False):
     # load scores
     alllocations = []
     pwm_cutoff = pwm_thresh+1
-    while len(alllocations)<10000:
+    while len(alllocations)<100:
         pwm_cutoff = pwm_cutoff - 1
         handle = loadutils.ZipFile(location_file)
         alllocations = handle.read(threshold=pwm_cutoff)
@@ -396,7 +455,7 @@ def infer(pwmid, sample, pwm_thresh=8, pwmbase='transfac', chipseq=False):
     posteriors = []
     
     null = np.ones((1,L),dtype=float)*1./L
-    posterior, footprint, negbinparams, prior = centipede.EM(dnasereads, dnasetotal, subscores, null, restarts=1)
+    posterior, footprint, negbinparams, prior = centipede.EM(dnasereads, dnasetotal, subscores, null, model=model, restarts=1)
 
     posteriors.append(posterior)
     footprints.append(footprint)
@@ -411,6 +470,7 @@ def infer(pwmid, sample, pwm_thresh=8, pwmbase='transfac', chipseq=False):
         logodds[logodds==np.inf] = logodds[logodds!=np.inf].max()
         logodds[logodds==-np.inf] = logodds[logodds!=-np.inf].min()
         R = stats.pearsonr(logodds, np.sqrt(chipreads))
+        R2 = stats.pearsonr(np.sqrt(dnasetotal), np.sqrt(chipreads))
 
         handle = open('/mnt/lustre/home/anilraj/histmod/cache/chipseq_peaks/%s_peaks.bed'%loadutils.factormap[pwmid],'r')
         calls = [line.strip().split()[:3] for line in handle]
@@ -420,7 +480,8 @@ def infer(pwmid, sample, pwm_thresh=8, pwmbase='transfac', chipseq=False):
         [macs[call[0]].append([int(call[1]),int(call[2])]) for call in calls if call[0] in utils.chromosomes[:22]]
         bsites = [locs_tolearn[i] for i,p in enumerate(posterior[:,1]) if p>0.99]
         F, precision, sensitivity, ig = Fscore.Fscore(bsites, macs)
-        print pwmid, sample, R, F, precision, sensitivity
+        chipauc, tpr = compute_chip_auc(chipreads, logodds, macs, locs_tolearn)
+        print pwmid, model+'tmp', sample, R, R2, chipauc, tpr, F, precision, sensitivity
 
     output = {'footprint': footprints, \
             'negbin': negbins, \
@@ -429,9 +490,9 @@ def infer(pwmid, sample, pwm_thresh=8, pwmbase='transfac', chipseq=False):
             'locations': locs_tolearn}
 
     if sample is None:
-        handle = open("%s/cache/combined/pbmcentipede_short_%s.pkl"%(projpath,pwmid),'w')
+        handle = open("%s/cache/combined/pbmcentipede_%s_short_%s.pkl"%(projpath,model,pwmid),'w')
     else:
-        handle = open("%s/cache/separate/pbmcentipede_short_%s_%s.pkl"%(projpath,pwmid,sample),'w')
+        handle = open("%s/cache/separate/pbmcentipede_%s_shorttmp_%s_%s.pkl"%(projpath,model,pwmid,sample),'w')
     cPickle.Pickler(handle, protocol=2).dump(output)
     handle.close()
 
