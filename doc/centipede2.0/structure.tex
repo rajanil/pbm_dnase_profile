@@ -1,0 +1,247 @@
+\documentclass[reqno]{amsart}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+%\usepackage{stmaryrd}
+%\usepackage{mathrsfs}
+%\usepackage{pifont}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage[usenames,dvipsnames]{color}
+\numberwithin{equation}{section}
+\usepackage{url}
+
+\oddsidemargin = 0.3in
+\evensidemargin = 0.3in
+\textwidth = 6in
+
+\input{aliases}
+
+\begin{document}
+
+\title{STRUCTURE: Variational Bayesian Inference}
+
+\author{Anil Raj}
+\author{Jonathan Pritchard}
+
+\date{\today}
+
+\maketitle
+
+\section{Model and Notation}
+Given the genotypes $\bG$ of a collection of $N$ individuals at $L$ loci, the goal is to find the posterior distribution over admixture proportions (over $K$ populations) for each individual and the posterior distribution over population-specific allele frequencies for each locus. The graphical model representing the joint distribution of the relevant variables is shown in figure \ref{fig:model}, followed by some notation used in this derivation. In this model, we \textbf{assume that the alleles are in Hardy-Weinberg equilibrium}.
+
+\begin{figure}[!h]
+    \begin{center}
+        \includegraphics[width=0.7\textwidth]{structure_model.pdf}
+    \end{center}
+    \caption{Graphical model for vbSTRUCTURE}
+    \label{fig:model}
+\end{figure}
+
+\begin{itemize}
+    \item Data
+    \begin{itemize}
+        \item $p(g_{nl}=0 | \nonzero{z^a_{nl}}=k, \nonzero{z^b_{nl}}=k', \Lcurly \pi_{l'} \Rcurly) = (1-\pi_{lk}) (1-\pi_{lk'})$
+        \item $p(g_{nl}=1 | \nonzero{z^a_{nl}}=k, \nonzero{z^b_{nl}}=k', \Lcurly \pi_{l'} \Rcurly) = 2\pi_{lk}(1-\pi_{lk'})$
+        \item $p(g_{nl}=2 | \nonzero{z^a_{nl}}=k, \nonzero{z^b_{nl}}=k', \Lcurly \pi_{l'} \Rcurly) = \pi_{lk}\pi_{lk'}$
+        where superscripts (a,b) denote the pair of chromosomes (diploid).
+    \end{itemize}
+    \item Hidden Variables
+    \begin{itemize}
+        \item $p(z^{a,b}_{nl} | \Lcurly \psi_{n'} \Rcurly) = \multinomial(\psi_n)$ where $(z^a_{nl},z^b_{nl})$ are indicator vectors 
+        whose non-zero index denotes from which population, locus $l$ on chromosomes $a$ and $b$ in individual $n$ was inherited.
+        Note that, for the homozygous case, it is arbitrary which of the two chromosomal pairs we call $a$ and $b$, while for the
+        heterozygous case, we'll denote $a$ to be the chromosome containing the minor allele and $b$ to be the chromosome containing
+        the major allele.
+        \item $z^a_{nl},z^b_{nl} \in \{0,1\}^K$.
+    \end{itemize}
+    \item Parameters
+    \begin{itemize}
+        \item $p(\psi_n | \alpha) = \dirichlet(\alpha)$
+        \item $\psi_n \in \mathbb{S}^K$ where $\mathbb{S}^K$ is the $K$-dimensional unit simplex
+        \item $p(\pi_{lk} | \pi_{Al}, F_k) = \betadist \left(\pi_{Al} \frac{1-F_k}{F_k}, (1-\pi_{Al}) \frac{1-F_k}{F_k} \right)$
+        \item $\pi_{lk} \in [0,1]$
+    \end{itemize}
+    \item Hyperparameters
+    \begin{itemize}
+        \item $p(\pi_{Al} | \beta, \gamma) = \betadist(\beta, \gamma)$
+        \item $p(F_k | \nu, \eta) = \betadist(\nu, \eta)$
+        \item $\alpha \in \mathbb{R}_+^K$
+        \item $\beta, \gamma, \nu, \eta \in \mathbb{R}_+$
+    \end{itemize}
+\end{itemize}
+
+\section{Evidence}
+
+The log evidence for the whole data can be written as
+
+\beq
+    \evidence
+        & = & \log p(\bG|K) = \log \sum_\bZ \int p(\bG,\bZ,\psi,\pi | K) \,d\psi \,d\pi \\
+        & \geq & \sum_\bZ \int q(\bZ, \psi, \pi) \log \frac{p(\bG,\bZ,\psi,\pi | K)}{q(\bZ, \psi, \pi)} \,d\psi \,d\pi \\ 
+        & = & \sum_\bZ \int \,d\pi q(\bZ, \pi) \log p(\bG | \bZ,\pi,K) + \sum_\bZ \int \,d\psi q(\bZ, \psi) \log p(\bZ | \psi,K) \\
+        & & + \int \,d\psi q(\psi) \log p(\psi | K) + \int \,d\pi q(\pi) \log p(\pi | K) + \entropy[q(\bZ, \psi, \pi)] \\
+        & = & \sum_n \sum_{z_n} \int \,d\pi q(z_n, \pi) \log p(g_n | z_n, \pi)
+        + \sum_n \sum_{z_n} \int \,d\psi_n q(z_n, \psi_n) \log p(z_n | \psi_n) \\
+        & & + \sum_n \int \,d\psi_n q(\psi_n) \log p(\psi_n) + \int \,d\pi q(\pi) \log p(\pi) + \entropy[q(\bZ, \psi, \pi)].
+\eeq
+
+Factorizing the approximate variational distribution as
+\beq
+    q(z_n, \psi_n, \pi) 
+        \approx q(z_n) q(\psi_n) q(\pi)
+        = \prod_{l} q(z^a_{nl}) q(z^b_{nl}) \cdot q(\psi_n) \cdot \prod_{lk} q(\pi_{lk})
+\eeq
+each factor can then be written as a parametric distribution as follows:
+\beq
+    q(z^a_{nl}) & \sim & \multinomial(\zv^a_{nl}) \\
+    q(z^b_{nl}) & \sim & \multinomial(\zv^b_{nl}) \\
+    q(\psi_n) & \sim & \dirichlet(\psiv_n) \\
+    q(\pi_{lk}) & \sim & \betadist(\pivb_{lk},\pivg_{lk}).
+\eeq
+
+Using $\delta(\cdot)$ as an indicator variable denoting the presence of genotype data, the evidence can be re-written as
+\beq
+    \evidence
+        & = & \sum_{n,l} \sum_{z^a_{nl},z^b_{nl}} \int \,d\pi q(z^a_{nl}) q(z^b_{nl}) q(\pi) \delta(g_{nl}) \log p(g_{nl} | z^a_{nl}, z^b_{nl}, \pi) \\
+        & & + \sum_{n,l} \sum_{z^a_{nl}, z^b_{nl}} \int \,d\psi_n q(z^a_{nl}) q(z^b_{nl}) q(\psi_n) \log \frac{p(z^a_{nl} | \psi_n)p(z^b_{nl} | \psi_n)}{q(z^a_{nl})q(z^b_{nl})} \\
+        & & + \sum_n \int \,d\psi_n q(\psi_n) \log \frac{p(\psi_n)}{q(\psi_n)} 
+        + \sum_{l,k} \int \,d\pi_{lk} q(\pi_{lk}) \log \frac{p(\pi_{lk})}{q(\pi_{lk})} \\
+        & = & \evidence_1 + \evidence_2 + \evidence_3 + \evidence_4
+\eeq
+Now,
+\beq
+    \evidence_1
+        & = & \sum_{n,l} \delta(g_{nl}) (\evidence_1)_{nl}
+\eeq
+where, for $g_{nl}=0$,
+\beq
+    (\evidence_1)_{nl}
+        & = & \sum_{z^a_{nl},z^b_{nl}} \int \,d\pi_{lk} \,d\pi_{lk'} q(z^a_{nl}) q(z^b_{nl}) q(\pi_{lk}) q(\pi_{lk'})
+        \sum_{k,k'} z^a_{nlk} z^b_{nlk'} \left( \log(1-\pi_{lk'}) + \log(1-\pi_{lk}) \right) \notag \\
+        & = & \int \,d\pi_{lk} \,d\pi_{lk'} q(\pi_{lk}) q(\pi_{lk'}) \sum_{k,k'} \zv^a_{nlk} \zv^b_{nlk'}
+        \left( \log(1-\pi_{lk'}) + \log(1-\pi_{lk}) \right) \\
+        & = & \sum_k (\zv^a_{nlk} + \zv^b_{nlk}) (\digamma(\pivg_{lk}) - \digamma(\pivb_{lk}+\pivg_{lk})),
+\eeq
+for $g_{nl}=1$,
+\beq
+    (\evidence_1)_{nl}
+        & = & \sum_k \zv^a_{nlk} (\digamma(\pivb_{lk}) - \digamma(\pivb_{lk}+\pivg_{lk}))
+        + \sum_k \zv^b_{nlk} (\digamma(\pivg_{lk}) - \digamma(\pivb_{lk}+\pivg_{lk})),
+\eeq
+and, for $g_{nl}=2$,
+\beq
+    (\evidence_1)_{nl}
+        & = & \sum_k (\zv^a_{nlk} + \zv^b_{nlk}) (\digamma(\pivb_{lk}) - \digamma(\pivb_{lk}+\pivg_{lk})).
+\eeq
+Thus,
+\beq
+    \evidence_1
+        & = & \sum_{n,l} \delta(g_{nl}) \Lcurly \identity{g_{nl}=0} \sum_k (\zv^a_{nlk} + \zv^b_{nlk}) \digamma(\pivg_{lk}) \right. \\
+        &  & + \identity{g_{nl}=1} \sum_k \left( \zv^a_{nlk} \digamma(\pivb_{lk}) + \zv^b_{nlk} \digamma(\pivg_{lk}) \right) \\
+        &  & \left. + \identity{g_{nl}=2} \sum_k (\zv^a_{nlk} + \zv^b_{nlk}) \digamma(\pivb_{lk}) 
+        - \sum_k (\zv^a_{nlk} + \zv^b_{nlk}) \digamma(\pivb_{lk}+\pivg_{lk}) \Rcurly \\
+    \evidence_2
+        & = & \sum_{n,l} \int \,d\psi_n q(\psi_n) \Lcurly \sum_{z^a_{nl}} q(z^a_{nl}) (z^{a^\bT}_{nl} \log \psi_n) + \sum_{z^b_{nl}} q(z^b_{nl}) (z^{b^\bT}_{nl} \log \psi_n) \Rcurly \\
+        & & - \sum_{n,l} \Lcurly \sum_{z^a_{nl}} q(z^a_{nl}) \log q(z^a_{nl}) + \sum_{z^b_{nl}} q(z^b_{nl}) \log q(z^b_{nl}) \Rcurly \\
+        & = & \sum_{n,l,k} (\zv^a_{nlk} + \zv^b_{nlk}) (\digamma(\psiv_{nk}) - \digamma(\psiv_{no})) 
+        - \sum_{n,l,k} (\zv^a_{nlk} \log \zv^a_{nlk} + \zv^b_{nlk} \log \zv^b_{nlk}) \label{eq:E_2} \\
+    \evidence_3
+        & = & \sum_n \int \,d\psi_n q(\psi_n) \log \frac{p(\psi_n)}{q(\psi_n)} \\
+        & = & \sum_n \left[ \sum_k \Lcurly \log \frac{\Gamma(\psiv_{nk})}{\Gamma(\alpha_{k})} 
+        - (\psiv_{nk} - \alpha_{k}) (\digamma(\psiv_{nk})-\digamma(\psiv_{no})) \Rcurly 
+        - \log \frac{\Gamma(\psiv_{no})}{\Gamma(\alpha_{o})} \right] \label{eq:E_3}\\
+    \evidence_4
+        & = & \sum_{l,k} \int \,d\pi_{lk} q(\pi_{lk}) \log \frac{p(\pi_{lk})}{q(\pi_{lk})} \\
+        & = & \sum_{l,k} \log \frac{\Gamma(\pivb_{lk})}{\Gamma(\beta)} - (\pivb_{lk}-\beta) (\digamma(\pivb_{lk}) - \digamma(\pivb_{lk}+\pivg_{lk})) \\
+        & & + \log \frac{\Gamma(\pivg_{lk})}{\Gamma(\gamma)} - (\pivg_{lk}-\gamma) (\digamma(\pivg_{lk}) - \digamma(\pivb_{lk}+\pivg_{lk}))
+        - \log \frac{\Gamma(\pivb_{lk}+\pivg_{lk})}{\Gamma(\beta+\gamma)}
+\eeq
+Above, $\gamma(\cdot)$ is the gamma function, $\digamma(\cdot)$ is the digamma function and $\psiv_{no} = \sum_k \psiv_{nk}$.
+
+\subsection{VBEM updates}
+\textbf{NOTE: NEED TO CHANGE THIS SECTION}
+\subsubsection{VBE step}
+In this step, the posterior distributions $q(z^a_{nl}), q(z^b_{nl})$ and $q(\psi_n)$ are updated, keeping other variational parameters fixed. Introducing Lagrange multipliers $\lambda^a_{nlk}, \lambda^b_{nlk}$ for each of the constraints $\sum_k \zv^{a,b}_{nlk} = 1$, the evidence can be maximized by setting its derivative to zero.
+
+\beq
+    \frac{\partial \evidence}{\partial \zv^a_{nlk}}
+        & = & \frac{\partial \evidence_1}{\partial \zv^a_{nlk}} + \frac{\partial \evidence_2}{\partial \zv^a_{nlk}} \\
+        & = & \delta(g_{nl}) \Lcurly \identity{g_{nl}=0} \digamma(\pivg_{lk}) + \identity{g_{nl}=1} \digamma(\pivb_{lk}) 
+        + \identity{g_{nl}=2} \digamma(\pivb_{lk}) - \digamma(\pivb_{lk}+\pivg_{lk}) \Rcurly \notag\\
+        & & \\
+        &  & + (\digamma(\psiv_{nk}) - \digamma(\psiv_{no})) - \log \zv^a_{nlk} - 1 + \lambda^a_{nlk} = 0 \\
+        & \Rightarrow & \zv^a_{nlk} \propto \exp \Lcurly \delta(g_{nl}) (\digamma^a_{g_{nl}} - \digamma(\pivb_{lk}+\pivg_{lk})) 
+        + \digamma(\psiv_{nk}) - \digamma(\psiv_{no}) \Rcurly.
+\eeq
+where $\digamma^a_{g_{nl}} = \identity{g_{nl}=0} \digamma(\pivg_{lk}) + \identity{g_{nl}=1} \digamma(\pivb_{lk}) + \identity{g_{nl}=2} \digamma(\pivb_{lk})$.
+Similarily,
+\beq
+    \zv^b_{nlk} \propto \exp \Lcurly \delta(g_{nl}) (\digamma^b_{g_{nl}} - \digamma(\pivb_{lk}+\pivg_{lk}))
+        + \digamma(\psiv_{nk}) - \digamma(\psiv_{no}) \Rcurly.
+\eeq
+where $\digamma^b_{g_{nl}} = \identity{g_{nl}=0} \digamma(\pivg_{lk}) + \identity{g_{nl}=1} \digamma(\pivg_{lk}) + \identity{g_{nl}=2} \digamma(\pivb_{lk})$.
+
+Note that for individuals with missing genotypes, the posterior distribution $q(z_{nl})$ becomes
+\beq
+    \zv^{a,b}_{nlk} \propto \exp \Lcurly \digamma(\psiv_{nk}) - \digamma(\psiv_{no}) \Rcurly.
+\eeq
+
+\beq
+    \frac{\partial \evidence}{\partial \psiv_{nk}}
+        & = & \frac{\partial \evidence_2}{\partial \psiv_{nk}} + \frac{\partial \evidence_3}{\partial \psiv_{nk}} \\
+        & = & \sum_l (\zv^a_{nlk} + \zv^b_{nlk}) (\digamma'(\psiv_{nk}) - \digamma'(\psiv_{no})) + \digamma(\psiv_{nk})
+        - (\digamma(\psiv_{nk}) - \digamma(\psiv_{no})) \\
+        & & -\digamma(\psiv_{no}) - (\psiv_{nk} - \alpha_k) (\digamma'(\psiv_{nk}) - \digamma'(\psiv_{no})) = 0 \\
+        & \Rightarrow & \psiv_{nk} = \alpha_k + \sum_l (\zv^a_{nlk} + \zv^b_{nlk}).
+\eeq
+
+\subsubsection{VBM step}
+In this step, the posterior distribution $q(\pi_{lk})$ is updated, keeping other variational parameters fixed.
+
+\beq
+    \frac{\partial \evidence}{\partial \pivb_{lk}}
+        & = & \frac{\partial \evidence_1}{\partial \pivb_{lk}} + \frac{\partial \evidence_4}{\partial \pivb_{lk}} \\
+        & = & \sum_n \delta(g_{nl}) \Lcurly \left( \identity{g_{nl}=1} \zv^a_{nlk}
+        + \identity{g_{nl}=2} (\zv^a_{nlk} + \zv^b_{nlk}) \right) \digamma'(\pivb_{lk}) 
+        - (\zv^a_{nlk} + \zv^b_{nlk}) \digamma'(\pivb_{lk}+\pivg_{lk})) \Rcurly \notag\\
+        &  & \\
+        &  & + \digamma(\pivb_{lk}) - (\digamma(\pivb_{lk})-\digamma(\pivb_{lk}+\pivg_{lk}))
+        - (\pivb_{lk}-\beta) (\digamma'(\pivb_{lk})-\digamma'(\pivb_{lk}+\pivg_{lk})) \\
+        &  & + (\pivg_{lk}-\gamma) \digamma'(\pivb_{lk}+\pivg_{lk}) - \digamma(\pivb_{lk}+\pivg_{lk}) = 0 \\
+    \frac{\partial \evidence}{\partial \pivg_{lk}}
+        & = & \frac{\partial \evidence_1}{\partial \pivg_{lk}} + \frac{\partial \evidence_4}{\partial \pivg_{lk}} \\
+        & = & \sum_n \delta(g_{nl}) \Lcurly \left( \identity{g_{nl}=1} \zv^b_{nlk}
+        + \identity{g_{nl}=0} (\zv^a_{nlk} + \zv^b_{nlk}) \right) \digamma'(\pivg_{lk})
+        - (\zv^a_{nlk} + \zv^b_{nlk}) \digamma'(\pivb_{lk}+\pivg_{lk})) \Rcurly \notag\\
+        &  & \\
+        &  & + \digamma(\pivg_{lk}) - (\digamma(\pivg_{lk})-\digamma(\pivb_{lk}+\pivg_{lk}))
+        - (\pivg_{lk}-\gamma) (\digamma'(\pivg_{lk})-\digamma'(\pivb_{lk}+\pivg_{lk})) \\
+        &  & + (\pivb_{lk}-\beta) \digamma'(\pivb_{lk}+\pivg_{lk}) - \digamma(\pivb_{lk}+\pivg_{lk}) = 0.
+\eeq
+The above two equations can be satisfied simultaneously by setting
+\beq
+    \pivb_{lk} 
+        & = & \beta + \sum_n \delta(g_{nl}) \left( \identity{g_{nl}=1} \zv^a_{nlk}
+        + \identity{g_{nl}=2} (\zv^a_{nlk} + \zv^b_{nlk}) \right) \\
+    \pivg_{lk}
+        & = & \gamma + \sum_n \delta(g_{nl}) \left( \identity{g_{nl}=1} \zv^b_{nlk}
+        + \identity{g_{nl}=0} (\zv^a_{nlk} + \zv^b_{nlk}) \right)
+\eeq
+
+\subsection{Hyperparameter Updates}
+In this step, we update the hyper-parameters $\{\alpha,\beta,\gamma\}$ by maximizing the evidence, keeping the variational parameters fixed.
+
+\beq
+    \frac{\partial \evidence}{\partial \alpha_k}
+        & = & \frac{\partial \evidence_3}{\partial \alpha_k}
+        = \sum_n -\digamma(\alpha_k) + (\digamma(\psiv_{nk}) - \digamma(\psiv_{no})) + \digamma(\alpha_o) = 0 \\
+        & \Rightarrow & \digamma(\alpha_k) - \digamma(\alpha_o) = \frac{1}{N} \sum_n \digamma(\psiv_{nk}) - \digamma(\psiv_{no}) \\
+    \frac{\partial \evidence}{\partial \beta}
+        & = & \frac{\partial \evidence_4}{\partial \beta} \\
+        & = & \sum_{l,k} -\digamma(\beta) + (\digamma(\pivb_{lk})-\digamma(\pivb_{lk}+\pivg_{lk})) + \digamma(\beta+\gamma) = 0 \\
+        & \Rightarrow & \digamma(\beta) - \digamma(\beta+\gamma) = \frac{1}{LK} \sum_{l,k} \digamma(\pivb_{lk}) - \digamma(\pivb_{lk}+\pivg_{lk})
+\eeq
+A similar equation can be derived for $\gamma$. In practice, the hyper-parameters can be updated by solving a nonlinear convex optimization problem using standard solvers.
+
+\end{document}

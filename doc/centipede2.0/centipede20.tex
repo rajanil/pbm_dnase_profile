@@ -1,0 +1,450 @@
+\documentclass[reqno]{amsart}
+\usepackage{amssymb}
+\usepackage{amsfonts}
+\usepackage{amsmath}
+%\usepackage{stmaryrd}
+%\usepackage{mathrsfs}
+%\usepackage{pifont}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage[usenames,dvipsnames]{color}
+\numberwithin{equation}{section}
+\usepackage{url}
+\usepackage{calc}
+
+\oddsidemargin = 0.3in
+\evensidemargin = 0.3in
+\textwidth = 6in
+
+\input{aliases}
+
+\begin{document}
+
+\title{CENTIPEDE 2.0}
+
+\author{Anil Raj}
+\author{Heejung Shim}
+
+\date{\today}
+
+\maketitle
+
+\section{Overview}
+CENTIPEDE aims to infer motif sites bound by transcription factors based on the DNase I cleavage patterns
+measured from DNase-Seq assays. The model relies on two assumptions: (1) sites bound by transcription
+factors have higher DNase I sensitivity than unbound sites, and (2) each transcription factor has a 
+characteristic DNase I cleavage profile at bound sites.
+
+Given a putative binding site, CENTIPEDE models the number of reads mapped to each base pair as a mixture
+of two distributions, where the mixing proportions capture the probability of the factor being bound.
+Specifically, conditional on being bound, the total number of reads are modelled as drawn from a 
+negative binomial distribution and the read profile, conditional on the total number of reads, are 
+modelled as drawn from a multinomial distribution.
+
+\begin{align}
+    p(X_n, T^X_n | Z_n=1) 
+        & = p(X_n | Z_n=1, T^X_n) p(T^X_n | Z_n=1) \\
+        & = \multinomial(\pi; T^X_n) \negbinomial(\alpha, \tau) \\
+    p(X_n, T^X_n | Z_n=0)
+        & = p(X_n | Z_n=0, T^X_n) p(T^X_n | Z_n=0) \\
+        & = \multinomial(\pi_o; T^X_n) \negbinomial(\alpha_o, \tau_o),
+\end{align}
+where $X_n \in \mathbb{N}_0^L$, $T^X_n = \sum_l X_{nl}$, $\pi \in \mathbb{S}^L$, $\mathbb{S}^L$ is the standard $L$-simplex, $\pi_o = \frac{1}{L}\mathbf{1}^L$, $\mathbf{1}^L$ is the $L$-dimensional vector of ones, $\alpha, \alpha_o \in \mathbb{R}^+$, and $\tau, \tau_o \in [0,1]$. $L$ is the length of the site around the binding motif.
+
+A key limitation of this generative model is that it does not appropriately model the correlation between number of 
+DNase I reads mapped to two different positions around the motif, conditional on the site being bound. One way 
+to model additional correlation structure between different positions relative to the motif would be to place 
+a logistic-normal prior on the multinomial parameter $\pi$; the covariance matrix in the logistic-normal 
+distribution can then be estimated from the data. However, the non-conjugacy of this prior makes exact 
+inference intractable, leading us to use approximate techniques like variational inference to compute the 
+posterior probabilities of the latent variables. This approach will be derived and discussed in the second 
+half of this document.
+
+Alternately, we propose to replace the multinomial part of the CENTIPEDE model with a multiscale generative
+model from which a multiscale transformation of the DNase I read counts are assumed to be drawn. Here, we derive the
+likelihood of the data and the posterior probability of the parameters given the data. See
+Kolaczyk (1999) for a detailed discussion of this inhomogenous Poisson process model.
+
+\section{Poisson-Binomial Model}
+Specifically, keeping Kolaczyk's notation for the parameters, let $Y_{njk}$ be the multiscale transformation of the
+data $X_{nl}$, where $j \in \{0,\ldots,J-1\}$, $J=\logtwo{L}$, and, $k \in \{0,\ldots,2^{j}-1\}$. Note that, the
+range of the $k$ index depends on the value of the $j$ index. For each site $n$, the transformation is given as
+\begin{align}
+    Y_{J-1,k} &= X_{2k}+X_{2k+1} \\
+    Y_{j,k} &= Y_{j+1,2k}+Y_{j+1,2k+1}, \qquad j \in \{0,\ldots,J-2\}.
+\end{align}
+Conditional on the total number of reads at a site, the likelihood function of $Y_n$ factorizes as follows:
+\begin{align}
+    p(Y_n | Z_n=1, T^X_n, R_n) = \prod_{j,k} p(Y_{njk} | Z_n=1, T_{njk}, R_{jk}),
+\end{align}
+where
+\begin{align}
+    R_{jk} &= \gamma_{jk} \diracdelta{\half} + (1 - \gamma_{jk}) \diracdelta{B_{jk}} \\
+    p(\gamma_{jk}) &= \bernoulli(\pi_j), \\
+\end{align}
+and, $\diracdelta{a}$ is the Dirac delta function centered at $a$. 
+For each scale $j$, the product is only over even values of the index $k$. For ease of notation, we introduce a variable
+$T_{njk} = Y_{n,j-1,k/2}$, the total number of reads at a coarser resolution from which reads at the finer resolution are
+drawn. Therefore, at a given scale and location, $Y_{njk}$ is effectively drawn from a mixture of
+a binomial distribution, with parameter $\half$ and a binomial distribution with parameter $B_{jk}$.
+
+We will derive and explore the following three variations of the above model:
+\begin{enumerate}
+    \item There is NO prior on $B_{jk}$, i.e., point estimates for $B_{jk}$ will be computed by maximizing the likelihood of the model.
+    \item There is a prior on $B_{jk}$, $B_{jk} \sim \betadist(\mu_j, \mu_j)$.
+    \item Overdispersion is accounted for by allowing for site-specific values for $R$, drawn from a beta
+    distribution with scale and location dependent precisions.
+\end{enumerate}
+Specifically, the three variations are:
+\begin{enumerate}
+    \item $\begin{aligned}[t]
+        Y_{njk} | T_{njk}, R_{jk} &\sim \binomial(R_{jk}; T_{njk}) \\
+        R_{jk} &= \gamma_{jk} \diracdelta{\half} + (1 - \gamma_{jk}) \diracdelta{B_{jk}} \\
+        \gamma_{jk} &\sim \bernoulli(\pi_j) \\
+        \mathrm{Thus,} \quad Y_{njk} | T_{njk}, \pi_j, B_{jk} &\sim \pi \binomial(\half; T_{njk}) + (1-\pi) \binomial(B_{jk}; T_{njk})
+    \end{aligned}$
+    \item $\begin{aligned}[t]
+        Y_{njk} | T_{njk}, R_{jk} &\sim \binomial(R_{jk}; T_{njk}) \\
+        R_{jk} &= \gamma_{jk} \diracdelta{\half} + (1 - \gamma_{jk}) \diracdelta{B_{jk}} \\
+        \gamma_{jk} &\sim \bernoulli(\pi_j) \\
+        B_{jk} &\sim \betadist(\mu_j, \mu_j) \\
+        \mathrm{Thus,} \quad Y_{njk} | T_{njk}, \pi_j, B_{jk} &\sim \pi \binomial(\half; T_{njk}) + (1-\pi) \betabinomial(\mu_j, \mu_j; T_{njk})
+    \end{aligned}$
+    \item $\begin{aligned}[t]
+        Y_{njk} | T_{njk}, R_{njk} &\sim \binomial(R_{njk}; T_{njk}) \\
+        R_{njk} &\sim \betadist(R_{jk}, \tau_{jk}) \\
+        R_{jk} &= \gamma_{jk} \diracdelta{\half} + (1 - \gamma_{jk}) B_{jk} \\
+        \gamma_{jk} &\sim \bernoulli(\pi_j) \\
+        \mathrm{Thus,} \quad Y_{njk} | T_{njk}, \pi_j, B_{jk} &\sim \pi \betabinomial(\half \tau_{jk}, \half \tau_{jk}; T_{njk}) \\
+            &+ (1-\pi) \betabinomial(B_{jk}\tau_{jk}, (1-B_{jk})\tau_{jk}; T_{njk})
+    \end{aligned}$
+\end{enumerate}
+
+In the framework of CENTIPEDE, we now have two sets of latent variables: one specifying whether a factor
+is bound at a site or not, and the other specifying the degree of smoothness in DNase I cleavage rates
+at different scales and locations around a specific motif. 
+Let us assume that the latent variable $Z_n$ is observed to be $1$ for a set of sites. 
+Maximum likelihood estimates for the parameters in each model can be calculated by 
+maximizing the lower bound on the likelihood, obtained
+by proposing a family of posterior distributions $q(\gamma_{jk})$, using the EM algorithm.
+\begin{align}
+    q(\gamma_{jk}) = \bernoulli(\gammav_{jk})
+\end{align}
+
+\subsection{Model 1}
+
+For this model, the lower bound to the log-likelihood can be derived as follows:
+
+\begin{align}
+    \likelihood
+        &= \sum_{n,j,k} \log p(Y_{njk} | \pi_j, B_{jk}; T_{\cdot jk}) \\
+        &= \sum_{n,j,k} \log \sum_{\gamma_{jk}} p(Y_{njk} | \gamma_{jk}, B_{jk}; T_{njk}) p(\gamma_{jk} | \pi_j) \\
+        &\geq \sum_{n,j,k} \sum_{\gamma_{jk}} q(\gamma_{jk}) \left( \log p(Y_{njk} | \gamma_{jk}, B_{jk}; T_{njk})
+        + \log \frac{p(\gamma_{jk} | \pi_j)}{q(\gamma_{jk})} \right) \\
+        &= \sum_{n,j,k} \expect{\log p(Y_{njk} | \gamma_{jk}; T_{njk})}{q(\gamma)}
+        + \expect{\log \frac{p(\gamma_{jk} | \pi_j)}{q(\gamma_{jk})}}{q(\gamma)} \\
+        &= \sum_{n,j,k} \expect{\gamma_{jk} \log p(Y_{njk} | \half; T_{njk}) + (1-\gamma_{jk}) \log p(Y_{njk} | B_{jk}; T_{njk})}{q(\gamma)}
+        + \expect{\log \frac{p(\gamma_{jk} | \pi_j)}{q(\gamma_{jk})}}{q(\gamma)} \\
+        &= \sum_{n,j,k} \gammav_{jk} \log p(Y_{njk} | \half; T_{njk}) + (1-\gammav_{jk}) \log p(Y_{njk} | B_{jk}; T_{njk})
+        + \expect{\log \frac{p(\gamma_{jk} | \pi_j)}{q(\gamma_{jk})}}{q(\gamma)}.
+\end{align}
+
+The distributions in the first and second terms are binomial distributions and the relevant likelihood functions can be written as follows.
+\begin{align}
+    \likelihood^b_{njk} 
+        &= \log p(Y_{njk} | \half; T_{njk}) 
+        = \mathcal{C}_{njk} + T_{njk} \log \left( \half \right)\\
+    \likelihood^{bb}_{njk}(B_{jk}) 
+        &= \log p(Y_{njk} | B_{jk}; T_{njk})
+        = \mathcal{C}_{njk} + Y_{njk} \log(B_{jk}) + (T_{njk}-Y_{njk}) \log(1-B_{jk})
+\end{align}
+Thus,
+\begin{align}
+    \likelihood
+        &= \sum_{n,j,k} \gammav_{jk} \likelihood^b_{njk} + (1-\gammav_{jk}) \likelihood^{bb}_{njk}(B_{jk})
+        + \gammav_{jk} \log \frac{\pi_j}{\gammav_{jk}} + (1-\gammav_{jk}) \log \frac{(1-\pi_j)}{(1-\gammav_{jk})}
+\end{align}
+
+Maximizing $\likelihood$ with respect to $\gammav_{jk}$ while keeping other parameters fixed gives
+\begin{align}
+    \frac{\partial \likelihood}{\partial \gammav_{jk}}
+        &= \frac{1}{N} \sum_n \likelihood^b_{njk} - \likelihood^{bb}_{njk}(B_{jk}) + \log \pi_j - \log (1-\pi_j) - \log \gammav_{jk} + \log (1-\gammav_{jk}) = 0
+\end{align}
+\begin{align}
+    \log \frac{\gammav_{jk}}{1-\gammav_{jk}}
+        &= \log \frac{\pi_j}{1-\pi_j} + \frac{1}{N} \sum_n \likelihood^b_{njk} - \likelihood^{bb}_{njk}(B_{jk})
+\end{align}
+
+Maximizing $\likelihood$ with respect to $\pi_j$ while keeping other parameters fixed gives
+\begin{align}
+    \frac{\partial \likelihood}{\partial \pi_j}
+        &= \frac{1}{\pi_j} \sum_k \gammav_{jk} - \frac{1}{1-\pi_j} \sum_k (1-\gammav_{jk}) = 0
+\end{align}
+\begin{align}
+    \pi_j = \frac{1}{K} \sum_k \gammav_{jk}
+\end{align}
+
+Maximizing $\likelihood$ with respect to $B_{jk}$ while keeping other parameters fixed gives
+\begin{align}
+    \frac{\partial \likelihood}{\partial B_{jk}}
+        &= \frac{1-\gamma_{jk}}{B_{jk}} \sum_n Y_{njk} - \frac{(1-\gamma_{jk})}{1-B_{jk}} \sum_n (T_{njk}-Y_{njk}) = 0
+\end{align}
+\begin{align}
+    B_{jk} = \frac{\sum_n Y_{njk}}{\sum_n T_{njk}}
+\end{align}
+
+\subsection{Model 2}
+
+Following the derivation in the previous model, the lower bound to the log-likelihood can be written as follows:
+\begin{align}
+    \likelihood
+        &\geq \sum_{n,j,k} \gammav_{jk} \log p(Y_{njk} | \half; T_{njk}) + (1-\gammav_{jk}) \log p(Y_{njk} | \mu_j; T_{njk})
+        + \expect{\log \frac{p(\gamma_{jk} | \pi_j)}{q(\gamma_{jk})}}{q(\gamma)}.
+\end{align}
+
+The distribution in the first term is a binomial distribution and the distribution in the second is a ``symmetric'' beta-binomial distribution.
+Since the parameters of these distributions are fixed, we will replace the relevant likelihood functions as follows.
+\begin{align}
+    \likelihood^b_{njk} &= \log p(Y_{njk} | \half; T_{njk}) \\
+    \likelihood^{bb}_{njk} &= \log p(Y_{njk} | \mu_j; T_{njk})
+\end{align}
+Thus,
+\begin{align}
+    \likelihood
+        &= \sum_{n,j,k} \gammav_{jk} \likelihood^b_{njk} + (1-\gammav_{jk}) \likelihood^{bb}_{njk}
+        + \gammav_{jk} \log \frac{\pi_j}{\gammav_{jk}} + (1-\gammav_{jk}) \log \frac{(1-\pi_j)}{(1-\gammav_{jk})}
+\end{align}
+
+Maximum likelihood estimates for $\gamma_{jk}$ and $\pi_j$, as derived earlier, can be written as
+\begin{align}
+    \log \frac{\gammav_{jk}}{1-\gammav_{jk}}
+        &= \log \frac{\pi_j}{1-\pi_j} + \frac{1}{N} \sum_n \likelihood^b_{njk} - \likelihood^{bb}_{njk} \\
+    \pi_j 
+        &= \frac{1}{K} \sum_k \gammav_{jk}
+\end{align}
+
+\subsection{Model 3}
+
+Again, as before, the lower bound to the log-likelihood can be written as follows:
+\begin{align}
+    \likelihood
+        &\geq \sum_{n,j,k} \gammav_{jk} \log p(Y_{njk} | \half, \tau_{jk}; T_{njk}) + (1-\gammav_{jk}) \log p(Y_{njk} | B_{jk}, \tau_{jk}; T_{njk})
+        + \expect{\log \frac{p(\gamma_{jk} | \pi_j)}{q(\gamma_{jk})}}{q(\gamma)}.
+\end{align}
+
+The distributions in the first and second terms are beta-binomial distributions and the relevant likelihood functions can be written as follows.
+\begin{align}
+    \likelihood^b_{njk}(\tau_{jk})
+        &= \log p(Y_{njk} | \half, \tau_{jk}; T_{njk})
+        = \mathcal{C}_{njk} + \gammaln(Y_{njk}+0.5\tau_{jk}) + \gammaln(T_{njk}-Y_{njk}+0.5\tau_{jk}) \notag\\
+        &- \gammaln(T_{njk}+\tau_{jk}) + \gammaln(\tau_{jk}) - 2*\gammaln(0.5\tau_{jk}) \\
+    \likelihood^{bb}_{njk}(B_{jk},\tau_{jk})
+        &= \log p(Y_{njk} | B_{jk}; T_{njk})
+        = \mathcal{C}_{njk} + \gammaln(Y_{njk}+B_{jk}\tau_{jk}) + \gammaln(T_{njk}-Y_{njk}+(1-B_{jk})\tau_{jk}) \notag\\
+        &- \gammaln(T_{njk}+\tau_{jk}) + \gammaln(\tau_{jk}) - \gammaln(B_{jk}\tau_{jk}) - \gammaln((1-B_{jk})\tau_{jk})
+\end{align}
+
+Thus,
+\begin{align}
+    \likelihood
+        &= \sum_{n,j,k} \gammav_{jk} \likelihood^b_{njk}(\tau_{jk}) + (1-\gammav_{jk}) \likelihood^{bb}_{njk}(B_{jk},\tau_{jk})
+        + \gammav_{jk} \log \frac{\pi_j}{\gammav_{jk}} + (1-\gammav_{jk}) \log \frac{(1-\pi_j)}{(1-\gammav_{jk})}
+\end{align}
+
+Maximum likelihood estimates for $\gamma_{jk}$ and $\pi_j$ are the same as derived in the earlier two models. Since the remaining
+parameters $B_{jk}$ and $\tau_{jk}$ occur within $\gammaln(\cdot)$ functions, closed form update equations
+for these parameters cannot be derived. Instead, we'll maximize the likelihood with respect to these parameters using
+generalized convex optimization algorithms. The gradient of the likelihood with respect to each of these parameters can be
+derived as follows.
+
+\begin{align}
+    \frac{\partial \likelihood}{\partial B_{jk}}
+        &= (1-\gammav_{jk}) \sum_n \left[ \tau_{jk} \digamma(Y_{njk}+B_{jk}\tau_{jk}) 
+        - \tau_{jk} \digamma(T_{njk}-Y_{njk}+(1-B_{jk})\tau_{jk}) \right. \notag\\
+        &- \left. \tau_{jk} \digamma(B_{jk}\tau_{jk}) + \tau_{jk} \digamma((1-B_{jk})\tau_{jk}) \right] \\
+    \frac{\partial \likelihood}{\partial \tau_{jk}}
+        &= \sum_n \gammav_{jk} \left[ 0.5 \digamma(Y_{njk}+0.5\tau_{jk}) + 0.5 \digamma(T_{njk}-Y_{njk}+0.5\tau_{jk}) \right. \notag\\
+        &- \left. \digamma(T_{njk}+\tau_{jk}) + \digamma(\tau_{jk}) - \digamma(0.5\tau_{jk}) \right] \notag\\
+        &+ (1-\gammav_{jk}) \left[ B_{jk} \digamma(Y_{njk}+B_{jk}\tau_{jk})
+        + (1-B_{jk}) \digamma(T_{njk}-Y_{njk}+(1-B_{jk})\tau_{jk}) \right. \notag\\
+        &- \left. \digamma(T_{njk}+\tau_{jk}) + \digamma(\tau_{jk}) 
+        - B_{jk} \digamma(B_{jk}\tau_{jk}) - (1-B_{jk}) \digamma((1-B_{jk})\tau_{jk}) \right]
+\end{align}
+
+\subsection{Posterior distribution of $R_{jk}$ -- Model 2}
+Following Kolaczyk (1999), the posterior distribution of $R_{jk}$ can be computed as follows
+\begin{align}
+    p(R_{jk} | Y_{\cdot jk}, T_{\cdot jk})
+        &= \frac{1}{\mathcal{Z}_{jk}} p(Y_{\cdot jk} | R_{jk}, T_{\cdot jk}) p(R_{jk}) \\
+        &= \left( \prod_n p(Y_{njk} | R_{jk}, T_{njk}) \right) p(R_{jk}) \\
+        &= \pi_j \left( \prod_n p(Y_{njk} | R_{jk}, T_{njk}) \right) \diracdelta{\half} + (1-\pi_j) \left( \prod_n p(Y_{njk} | R_{jk}, T_{njk}) \right) \betadist(\mu_j, \mu_j),
+\end{align}
+where $\mathcal{Z}_{jk}$ is the appropriate normalizing constant.
+Now,
+\begin{align}
+    p(Y_{njk} | R_{jk}, T_{njk})
+        &= \Gamma_{njk} R_{jk}^{Y_{njk}} (1-R_{jk})^{T_{njk}-Y_{njk}},
+\end{align}
+where $\Gamma_{njk}$ is the normalizing constant of the binomial distribution. Thus,
+\begin{align}
+    p(Y_{\cdot jk} | R_{jk}, T_{\cdot jk})
+        &= \prod_n \Gamma_{njk} \prod_n R_{jk}^{Y_{njk}} \prod_n (1-R_{jk})^{T_{njk}-Y_{njk}} \\
+        &= \Gamma_{jk} R_{jk}^{\sum_n Y_{njk}} (1-R_{jk})^{\sum_n T_{njk}-Y_{njk}},
+\end{align}
+where $\Gamma_{jk} = \prod_n \Gamma_{njk}$. The normalizing constant $Z_{jk}$ can now be computed as follows.
+\begin{align}
+    Z_{jk} 
+        &= \pi_j \int \Gamma_{jk} R_{jk}^{\sum_n Y_{njk}} (1-R_{jk})^{\sum_n T_{njk}-Y_{njk}} \diracdelta{\half} \,dR_{jk} \\
+        &+ (1-\pi_j) \int \Gamma_{jk} R_{jk}^{\sum_n Y_{njk}} (1-R_{jk})^{\sum_n T_{njk}-Y_{njk}} \betadist(\mu_j, \mu_j) \,dR_{jk} \\
+        &= \Gamma_{jk} \left[ \pi_j \left( \half \right)^{\sum_n T_{njk}} + (1-\pi_j) \frac{\Gamma(2\mu_j)}{\Gamma(\mu_j)^2} 
+        \frac{\Gamma(\mu_j+\sum_n Y_{njk}) \Gamma(\mu_j+\sum_n T_{njk} - Y_{njk})}{\Gamma(2\mu_j+\sum_n T_{njk})} \right]
+\end{align}
+Following the same calculation, the posterior mean can be computed as follows.
+\begin{align}
+    \expect{R_{jk} | Y_{\cdot jk}, T_{\cdot jk}}{}
+        &= \frac{\Gamma_{jk}}{Z_{jk}} \left[ \pi_j \left( \half \right)^{\sum_n T_{njk}+1} + (1-\pi_j) \frac{\Gamma(2\mu_j)}{\Gamma(\mu_j)^2}
+        \frac{\Gamma(\mu_j+\sum_n Y_{njk}+1) \Gamma(\mu_j+\sum_n T_{njk} - Y_{njk})}{\Gamma(2\mu_j+\sum_n T_{njk}+1)} \right] \\
+        &= \frac{\pi_j \left( \half \right)^{\sum_n T_{njk}+1} + (1-\pi_j) \frac{\Gamma(2\mu_j)}{\Gamma(\mu_j)^2}
+        \frac{\Gamma(\mu_j+\sum_n Y_{njk}+1) \Gamma(\mu_j+\sum_n T_{njk} - Y_{njk})}{\Gamma(2\mu_j+\sum_n T_{njk}+1)}}
+        {\pi_j \left( \half \right)^{\sum_n T_{njk}} + (1-\pi_j) \frac{\Gamma(2\mu_j)}{\Gamma(\mu_j)^2}
+        \frac{\Gamma(\mu_j+\sum_n Y_{njk}) \Gamma(\mu_j+\sum_n T_{njk} - Y_{njk})}{\Gamma(2\mu_j+\sum_n T_{njk})}} \\
+        &= \frac{\pi_j \left( \half \right)^{\sum_n T_{njk}+1} 
+        + (1-\pi_j) \frac{B(\mu_j+\sum_n Y_{njk}+1,\mu_j+\sum_n T_{njk} - Y_{njk})}{B(\mu_j,\mu_j)}}
+        {\pi_j \left( \half \right)^{\sum_n T_{njk}} + (1-\pi_j) \frac{B(\mu_j+\sum_n Y_{njk},\mu_j+\sum_n T_{njk} - Y_{njk})}{B(\mu_j,\mu_j)}},
+\end{align}
+where $B(\cdot,\cdot)$ is the beta function.
+
+\section{Centipede-PBM}
+
+Each of the above three models can be straightforwardly incorporated into CENTIPEDE's learning framework by first deriving 
+how the Poisson-Binomial model modifies the likelihood function. The key change is restricted to the multinomial part
+of CENTIPEDE's likelihood function. Here, we derive the form of the change for Model $1$, and then apply the change
+directly to Models $2$ and $3$.
+
+\begin{align}
+    \likelihood
+        &= \sum_{n} \log \sum_{Z_n} p(X_n|Z_n,T^X_n) p(T^X_n|Z_n) p(Z_n|S_n,\beta) \\
+        &\geq \sum_n \sum_{Z_n} q(Z_n) \log p(X_n|Z_n,T^X_n) + \sum_{Z_n} q(Z_n) \log p(T^X_n | Z_n) + \expect{\log \frac{p(Z_n)}{q(Z_n)}}{q(Z_n)} \\
+        &= \sum_n \zv_n \log p(X_n|Z_n=1,T^X_n) + (1-\zv_n) \log p(X_n|Z_n=0,T^X_n) \notag\\
+        &+ \sum_{Z_n} q(Z_n) \log p(T^X_n | Z_n) + \expect{\log \frac{p(Z_n)}{q(Z_n)}}{q(Z_n)} \\
+        &= \sum_n \zv_n \log \left[ \prod_{j,k} \sum_{\gamma_{jk}} p(Y_{njk} | \gamma_{jk}, B_{jk}; T_{njk}) p(\gamma_{jk} | \pi_j) \right]
+        + (1-\zv_n) \log \prod_{j,k} p(Y_{njk} | \half; T_{njk}) \notag\\
+        &+ \sum_{Z_n} q(Z_n) \log p(T^X_n | Z_n) + \expect{\log \frac{p(Z_n)}{q(Z_n)}}{q(Z_n)} \\
+        &\geq \sum_{n,j,k} \zv_n \sum_{\gamma_{jk}} q(\gamma_{jk}) \left( \log p(Y_{njk} | \gamma_{jk}, B_{jk}; T_{njk}) 
+        + \log \frac{p(\gamma_{jk} | \pi_j)}{q(\gamma_{jk})} \right) 
+        + (1-\zv_n) \log p(Y_{njk} | \half; T_{njk}) \notag\\
+        &+ \sum_{Z_n} q(Z_n) \log p(T^X_n | Z_n) + \expect{\log \frac{p(Z_n)}{q(Z_n)}}{q(Z_n)} \\
+        &= \sum_{n,j,k} \zv_n \left( \gammav_{jk} \log p(Y_{njk} | \half; T_{njk}) + (1-\gammav_{jk}) \log p(Y_{njk} | B_{jk}; T_{njk})
+        + \expect{\log \frac{p(\gamma_{jk} | \pi_j)}{q(\gamma_{jk})}}{q(\gamma)} \right) \notag\\
+        &+ (1-\zv_n) \log p(Y_{njk} | \half; T_{njk}) 
+        + \sum_{Z_n} q(Z_n) \log p(T^X_n | Z_n) + \expect{\log \frac{p(Z_n)}{q(Z_n)}}{q(Z_n)} \\
+        &= \sum_{n,j,k} \zv_n \left( \gammav_{jk} \likelihood^b_{njk} + (1-\gammav_{jk}) \likelihood^{bb}_{njk}(B_{jk})
+        + \gammav_{jk} \log \frac{\pi_j}{\gammav_{jk}} + (1-\gammav_{jk}) \log \frac{(1-\pi_j)}{(1-\gammav_{jk})} \right) \notag\\
+        &+ (1-\zv_n) \likelihood^b_{njk} + \sum_{Z_n} q(Z_n) \log p(T^X_n | Z_n) + \expect{\log \frac{p(Z_n)}{q(Z_n)}}{q(Z_n)} \\
+\end{align}
+The last two terms include the negative binomial contribution and the KL-divergence between the prior and posteriors, exactly as in CENTIPEDE.
+Thus, the modified likelihood terms for the three models, and the relevant modified update equations, can be written as follows.
+
+\subsection{Model 1}
+
+The modified likelihood terms include
+\begin{align}
+    \likelihood
+        &= \sum_{n,j,k} \zv_n \left( \gammav_{jk} \likelihood^b_{njk} + (1-\gammav_{jk}) \likelihood^{bb}_{njk}(B_{jk})
+        + \gammav_{jk} \log \frac{\pi_j}{\gammav_{jk}} + (1-\gammav_{jk}) \log \frac{(1-\pi_j)}{(1-\gammav_{jk})} \right)
+        + (1-\zv_n) \likelihood^b_{njk},
+\end{align}
+where
+\begin{align}
+    \likelihood^b_{njk}
+        &= \log p(Y_{njk} | \half; T_{njk})
+        = \mathcal{C}_{njk} + T_{njk} \log \left( \half \right)\\
+    \likelihood^{bb}_{njk}(B_{jk})
+        &= \log p(Y_{njk} | B_{jk}; T_{njk})
+        = \mathcal{C}_{njk} + Y_{njk} \log(B_{jk}) + (T_{njk}-Y_{njk}) \log(1-B_{jk})
+\end{align}
+In the update equation for $\zv$, the likelihood functions of the multinomial parameters can be replaced by the following terms.
+\begin{align}
+    \log \frac{\zv_n}{1-\zv_n} 
+        &= \sum_{j,k} (1-\gammav_{jk}) (\likelihood^{bb}_{njk}(B_{jk}) - \likelihood^b_{njk})
+        + \gammav_{jk} \log \frac{\pi_j}{\gammav_{jk}} + (1-\gammav_{jk}) \log \frac{(1-\pi_j)}{(1-\gammav_{jk})}
+        + \mathrm{remaining \, terms}
+\end{align}
+A similar modification applied for the other two models. The update equations for $\gammav$, $B$ and $\pi$ can be modified as follows:
+
+\begin{align}
+    \log \frac{\gammav_{jk}}{1-\gammav_{jk}}
+        &= \log \frac{\pi_j}{1-\pi_j} + \frac{\sum_n \zv_n \left( \likelihood^b_{njk} - \likelihood^{bb}_{njk}(B_{jk}) \right)}{\sum_n \zv_n} \\
+    \pi_j 
+        &= \frac{1}{K} \sum_k \gammav_{jk} \\
+    B_{jk} 
+        &= \frac{\sum_n \zv_n Y_{njk}}{\sum_n \zv_n T_{njk}}
+\end{align}
+
+\subsection{Model 2}
+\begin{align}
+    \likelihood
+        &= \sum_{n,j,k} \zv_n \left( \gammav_{jk} \likelihood^b_{njk} + (1-\gammav_{jk}) \likelihood^{bb}_{njk}
+        + \gammav_{jk} \log \frac{\pi_j}{\gammav_{jk}} + (1-\gammav_{jk}) \log \frac{(1-\pi_j)}{(1-\gammav_{jk})} \right)
+        + (1-\zv_n) \likelihood^b_{njk},
+\end{align}
+where
+\begin{align}
+    \likelihood^b_{njk} &= \log p(Y_{njk} | \half; T_{njk}) \\
+    \likelihood^{bb}_{njk} &= \log p(Y_{njk} | \mu_j; T_{njk}).
+\end{align}
+
+Update equations for $\gammav$ and $\pi$ can be given as
+\begin{align}
+    \log \frac{\gammav_{jk}}{1-\gammav_{jk}}
+        &= \log \frac{\pi_j}{1-\pi_j} + \frac{\sum_n \zv_n \left( \likelihood^b_{njk} - \likelihood^{bb}_{njk} \right)}{\sum_n \zv_n} \\
+    \pi_j
+        &= \frac{1}{K} \sum_k \gammav_{jk}
+\end{align}
+
+\subsection{Model 3}
+\begin{align}
+    \likelihood
+        &= \sum_{n,j,k} \zv_n \left( \gammav_{jk} \likelihood^b_{njk}(\tau_{jk}) 
+        + (1-\gammav_{jk}) \likelihood^{bb}_{njk}(B_{jk},\tau_{jk})
+        + \gammav_{jk} \log \frac{\pi_j}{\gammav_{jk}} + (1-\gammav_{jk}) \log \frac{(1-\pi_j)}{(1-\gammav_{jk})} \right)
+        + (1-\zv_n) \likelihood^o_{njk},
+\end{align}
+where
+\begin{align}
+    \likelihood^b_{njk}(\tau_{jk})
+        &= \mathcal{C}_{njk} + \gammaln(Y_{njk}+0.5\tau_{jk}) + \gammaln(T_{njk}-Y_{njk}+0.5\tau_{jk}) \notag\\
+        &- \gammaln(T_{njk}+\tau_{jk}) + \gammaln(\tau_{jk}) - 2*\gammaln(0.5\tau_{jk}) \\
+    \likelihood^{bb}_{njk}(B_{jk},\tau_{jk})
+        &= \mathcal{C}_{njk} + \gammaln(Y_{njk}+B_{jk}\tau_{jk}) + \gammaln(T_{njk}-Y_{njk}+(1-B_{jk})\tau_{jk}) \notag\\
+        &- \gammaln(T_{njk}+\tau_{jk}) + \gammaln(\tau_{jk}) - \gammaln(B_{jk}\tau_{jk}) - \gammaln((1-B_{jk})\tau_{jk})
+    \likelihood^o_{njk}(\tau^o_{jk})
+        &= \mathcal{C}_{njk} + \gammaln(Y_{njk}+0.5\tau^o_{jk}) + \gammaln(T_{njk}-Y_{njk}+0.5\tau^o_{jk}) \notag\\
+        &- \gammaln(T_{njk}+\tau^o_{jk}) + \gammaln(\tau^o_{jk}) - 2*\gammaln(0.5\tau^o_{jk}) \\
+\end{align}
+
+Update equations for $\gammav$ and $\pi$ can be given as
+\begin{align}
+    \log \frac{\gammav_{jk}}{1-\gammav_{jk}}
+        &= \log \frac{\pi_j}{1-\pi_j} + \frac{\sum_n \zv_n \left( \likelihood^b_{njk}(\tau_{jk}) 
+        - \likelihood^{bb}_{njk}(B_{jk},\tau_{jk}) \right)}{\sum_n \zv_n} \\
+    \pi_j
+        &= \frac{1}{K} \sum_k \gammav_{jk}
+\end{align}
+The gradient of the likelihood with respect to $B$ and $\tau$ can be derived as follows.
+
+\begin{align}
+    \frac{\partial \likelihood}{\partial B_{jk}}
+        &= \tau_{jk} (1-\gammav_{jk}) \sum_n \zv_n \left[ \digamma(Y_{njk}+B_{jk}\tau_{jk})
+        - \digamma(T_{njk}-Y_{njk}+(1-B_{jk})\tau_{jk}) \right. \notag\\
+        &- \left. \digamma(B_{jk}\tau_{jk}) + \digamma((1-B_{jk})\tau_{jk}) \right] \\
+    \frac{\partial \likelihood}{\partial \tau_{jk}}
+        &= \sum_n \zv_n \gammav_{jk} \left[ 0.5 \digamma(Y_{njk}+0.5\tau_{jk}) + 0.5 \digamma(T_{njk}-Y_{njk}+0.5\tau_{jk}) \right. \notag\\
+        &- \left. \digamma(T_{njk}+\tau_{jk}) + \digamma(\tau_{jk}) - \digamma(0.5\tau_{jk}) \right] \notag\\
+        &+ \zv_n (1-\gammav_{jk}) \left[ B_{jk} \digamma(Y_{njk}+B_{jk}\tau_{jk})
+        + (1-B_{jk}) \digamma(T_{njk}-Y_{njk}+(1-B_{jk})\tau_{jk}) \right. \notag\\
+        &- \left. \digamma(T_{njk}+\tau_{jk}) + \digamma(\tau_{jk})
+        - B_{jk} \digamma(B_{jk}\tau_{jk}) - (1-B_{jk}) \digamma((1-B_{jk})\tau_{jk}) \right]
+\end{align}
+
+\end{document}
