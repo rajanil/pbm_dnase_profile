@@ -2,8 +2,10 @@ import numpy as np
 import matplotlib.pyplot as plot
 import pdb
 
+sample = 'Gm12878'
+
 # load valid factors
-handle = open('/Users/anilraj/work/pbm_dnase_profile/fig/plot_Gm12878.txt','r')
+handle = open('/Users/anilraj/work/pbm_dnase_profile/fig/plot_%s.txt'%sample,'r')
 lines = [line.strip() for line in handle if 'modelB' in line]
 handle.close()
 
@@ -15,7 +17,7 @@ auc = dict([(f,[]) for f in factors])
 tpr = dict([(f,[]) for f in factors])
 
 # load vanilla results
-handle = open('/Users/anilraj/work/pbm_dnase_profile/fig/vanilla_Gm12878.txt','r')
+handle = open('/Users/anilraj/work/pbm_dnase_profile/fig/vanilla_%s.txt'%sample,'r')
 lines = [line.strip() for line in handle if 'nan' not in line]
 handle.close()
 for line in lines:
@@ -29,7 +31,7 @@ for line in lines:
         continue
 
 # load damped results
-handle = open('/Users/anilraj/work/pbm_dnase_profile/fig/damped_Gm12878.txt','r')
+handle = open('/Users/anilraj/work/pbm_dnase_profile/fig/damped_%s.txt'%sample,'r')
 lines = [line.strip() for line in handle if 'nan' not in line]
 handle.close()
 for line in lines:
@@ -43,7 +45,7 @@ for line in lines:
         continue
 
 # load modelB results
-handle = open('/Users/anilraj/work/pbm_dnase_profile/fig/modelB_Gm12878.txt','r')
+handle = open('/Users/anilraj/work/pbm_dnase_profile/fig/modelB_%s.txt'%sample,'r')
 lines = [line.strip() for line in handle if 'nan' not in line]
 handle.close()
 for line in lines:
@@ -64,24 +66,27 @@ T = np.array([tpr[f] for f in factors])
 # plot comparing logodds correlation
 figure = plot.figure()
 subplot = figure.add_subplot(111)
-for val in L:
-    if val[2]>=val[1]:
-        color = 'b'
-    else:
-        color = 'r'
+for i,val in enumerate(L):
+    try:
+        if val[2]>=val[1]:
+            color = 'b'
+        else:
+            color = 'r'
+    except IndexError:
+        pdb.set_trace()
     subplot.plot([val[0],val[0]], [val[1],val[2]], color=color, linewidth=1)
 
 subplot.set_xlabel('Pearson R (Centipede)')
 subplot.set_ylabel('Pearson R (Centipede with shrinkage / Centipede_PBM -- Model B)')
-xmin = L[:,0].min()
-xmax = L[:,0].max()
-ymin = L[:,1:].min()
-ymax = L[:,1:].max()
+xmin = L.min()
+xmax = L.max()
+ymin = L.min()
+ymax = L.max()
 subplot.axis([xmin, xmax, ymin, ymax])
 subplot.plot([xmin,xmax],[ymin,ymax],c='k',alpha=0.5)
 
 figure.suptitle('comparing the LogPosteriorOdds-vs-ChipSeq correlations')
-figure.savefig('/Users/anilraj/work/pbm_dnase_profile/fig/Gm12878_logodds.pdf', dpi=300, format='pdf')
+figure.savefig('/Users/anilraj/work/pbm_dnase_profile/fig/%s_logodds.pdf'%sample, dpi=300, format='pdf')
 
 # plot comparing logodds correlation
 figure = plot.figure()
@@ -95,15 +100,15 @@ for val in D:
 
 subplot.set_xlabel('Pearson R (Centipede)')
 subplot.set_ylabel('Pearson R (Centipede with shrinkage / Centipede_PBM -- Model B)')
-xmin = D[:,0].min()
-xmax = D[:,0].max()
-ymin = D[:,1:].min()
-ymax = D[:,1:].max()
+xmin = D.min()
+xmax = D.max()
+ymin = D.min()
+ymax = D.max()
 subplot.axis([xmin, xmax, ymin, ymax])
 subplot.plot([xmin,xmax],[ymin,ymax],c='k',alpha=0.5)
 
 figure.suptitle('comparing the Dnase-vs-ChipSeq correlations')
-figure.savefig('/Users/anilraj/work/pbm_dnase_profile/fig/Gm12878_dnase.pdf', dpi=300, format='pdf')
+figure.savefig('/Users/anilraj/work/pbm_dnase_profile/fig/%s_dnase.pdf'%sample, dpi=300, format='pdf')
 
 # plot comparing logodds correlation
 figure = plot.figure()
@@ -125,7 +130,7 @@ subplot.axis([xmin, xmax, ymin, ymax])
 subplot.plot([xmin,xmax],[ymin,ymax],c='k',alpha=0.5)
 
 figure.suptitle('comparing the prediction auROC')
-figure.savefig('/Users/anilraj/work/pbm_dnase_profile/fig/Gm12878_auc.pdf', dpi=300, format='pdf')
+figure.savefig('/Users/anilraj/work/pbm_dnase_profile/fig/%s_auc.pdf'%sample, dpi=300, format='pdf')
 
 # plot comparing logodds correlation
 figure = plot.figure()
@@ -147,7 +152,7 @@ subplot.axis([xmin, xmax, ymin, ymax])
 subplot.plot([xmin,xmax],[ymin,ymax],c='k',alpha=0.5)
 
 figure.suptitle('comparing the TPR @ 1% FPR')
-figure.savefig('/Users/anilraj/work/pbm_dnase_profile/fig/Gm12878_tpr.pdf', dpi=300, format='pdf')
+figure.savefig('/Users/anilraj/work/pbm_dnase_profile/fig/%s_tpr.pdf'%sample, dpi=300, format='pdf')
 
 """
 # scatter plot comparing logodds correlation

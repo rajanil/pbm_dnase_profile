@@ -31,7 +31,7 @@
 
 \section{Overview}
 CENTIPEDE aims to infer motif sites bound by transcription factors based on the DNase I cleavage patterns
-measured from DNase-Seq assays. The model relies on two assumptions: (1) sites bound by transcription
+measured from DNase-Seq assays \heejung{Q: I'm a bit confused with how CENTIPEDE works. It pre-selects a set of motif matches by using a known motif or k-mer and run CENTIPEDE model? So DNase I cleavage patterns provides information on actual binding conditional on motif match?}. The model relies on two assumptions: (1) sites bound by transcription
 factors have higher DNase I sensitivity than unbound sites, and (2) each transcription factor has a 
 characteristic DNase I cleavage profile at bound sites.
 
@@ -49,10 +49,10 @@ modelled as drawn from a multinomial distribution.
         & = p(X_n | Z_n=0, T^X_n) p(T^X_n | Z_n=0) \\
         & = \multinomial(\pi_o; T^X_n) \negbinomial(\alpha_o, \tau_o),
 \end{align}
-where $X_n \in \mathbb{N}_0^L$, $T^X_n = \sum_l X_{nl}$, $\pi \in \mathbb{S}^L$, $\mathbb{S}^L$ is the standard $L$-simplex, $\pi_o = \frac{1}{L}\mathbf{1}^L$, $\mathbf{1}^L$ is the $L$-dimensional vector of ones, $\alpha, \alpha_o \in \mathbb{R}^+$, and $\tau, \tau_o \in [0,1]$. $L$ is the length of the site around the binding motif.
+where $X_n \in \mathbb{N}_0^L$, $T^X_n = \sum_l X_{nl}$, $\pi \in \mathbb{S}^L$, $\mathbb{S}^L$ is the standard $L$-simplex, $\pi_o = \frac{1}{L}\mathbf{1}^L$, $\mathbf{1}^L$ is the $L$-dimensional vector of ones, $\alpha, \alpha_o \in \mathbb{R}^+$, and $\tau, \tau_o \in [0,1]$. $L$ is the length of the site around the binding motif \heejung{Q: In CENTIPEDE, do they provide how to select $L$ in advance. Or results are not sensitive to choice of $L$?}.
 
 A key limitation of this generative model is that it does not appropriately model the correlation between number of 
-DNase I reads mapped to two different positions around the motif, conditional on the site being bound. One way 
+DNase I reads mapped to two different positions around the motif, conditional on the site being bound \heejung{Comment: Where does the correlation come from? If it's because underlying signals are smooth (i.e. spatially structured), I'd argue that a multi-scale poisson model can model spatially structured signals. I'd like to use `spatially structured or smooth' rather than `correlation'. I think that a logistic-normal prior can be considered  to model spatially structured signals}. One way 
 to model additional correlation structure between different positions relative to the motif would be to place 
 a logistic-normal prior on the multinomial parameter $\pi$; the covariance matrix in the logistic-normal 
 distribution can then be estimated from the data. However, the non-conjugacy of this prior makes exact 
@@ -63,7 +63,17 @@ half of this document.
 Alternately, we propose to replace the multinomial part of the CENTIPEDE model with a multiscale generative
 model from which a multiscale transformation of the DNase I read counts are assumed to be drawn. Here, we derive the
 likelihood of the data and the posterior probability of the parameters given the data. See
-Kolaczyk (1999) for a detailed discussion of this inhomogenous Poisson process model.
+Kolaczyk (1999) for a detailed discussion of this inhomogenous Poisson process model 
+\heejung{Comment: Ummm. I think we should change this paragraph, but I wasn't sure how it should be corrected. 
+First, precisely speaking, there is no transformed data. Instead of transforming data, parameters are transformed (re-parameterized)?
+Kolaczyk (1999) called his model `A Bayesian multiscale model', but I'm not sure if we want to use `Bayesian' in our approach. 
+What about `a hierarchical multi-scale poisson model'? I made changes in the next paragraph...}.
+
+Alternately, we propose to replace the multinomial part of the CENTIPEDE model with a hierarchical multi-scale poisson model. 
+Here, we describe the model and derive maximum likelihood estimators for parameters. 
+See Kolaczyk (1999) for a detailed discussion of this inhomogenous multi-scale poisson process model. 
+
+
 
 \section{Poisson-Binomial Model}
 Specifically, keeping Kolaczyk's notation for the parameters, let $Y_{njk}$ be the multiscale transformation of the
@@ -73,7 +83,7 @@ range of the $k$ index depends on the value of the $j$ index. For each site $n$,
     Y_{J-1,k} &= X_{2k}+X_{2k+1} \\
     Y_{j,k} &= Y_{j+1,2k}+Y_{j+1,2k+1}, \qquad j \in \{0,\ldots,J-2\}.
 \end{align}
-Conditional on the total number of reads at a site, the likelihood function of $Y_n$ factorizes as follows:
+Conditional on the total number of reads at a site, the likelihood function of $Y_n$ \heejung{Comment: I think this part is a bit tricky. Likelihood function is about parameters. I made changes in the next paragraph, but I'm not sure if this is the best. Moreover, I understand why you use $R_n$ instead of $R$. But, then, we should use $R_{njk}$ instead of $R_{jk}$. For now, I start with $R$ and later mention that we allow each site to have own $R_n$?} factorizes as follows:
 \begin{align}
     p(Y_n | Z_n=1, T^X_n, R_n) = \prod_{j,k} p(Y_{njk} | Z_n=1, T_{njk}, R_{jk}),
 \end{align}
@@ -83,19 +93,32 @@ where
     p(\gamma_{jk}) &= \bernoulli(\pi_j), \\
 \end{align}
 and, $\diracdelta{a}$ is the Dirac delta function centered at $a$. 
+
+Conditional on the total number of reads at a site, the likelihood function of parameter $R = (R_{jk})$ factorizes as follows:
+\begin{align}
+    p(X_n | Z_n=1, T^X_n, R) = \prod_{j,k} p(Y_{njk} | Z_n=1, T_{njk}, R_{jk}),
+\end{align}
+where
+\begin{align}
+    R_{jk} &= \gamma_{jk} \diracdelta{\half} + (1 - \gamma_{jk}) \diracdelta{B_{jk}} \\
+    p(\gamma_{jk}) &= \bernoulli(\pi_j), \\
+\end{align}
+and, $\diracdelta{a}$ is the Dirac delta function centered at $a$. 
+
 For each scale $j$, the product is only over even values of the index $k$. For ease of notation, we introduce a variable
 $T_{njk} = Y_{n,j-1,k/2}$, the total number of reads at a coarser resolution from which reads at the finer resolution are
 drawn. Therefore, at a given scale and location, $Y_{njk}$ is effectively drawn from a mixture of
 a binomial distribution, with parameter $\half$ and a binomial distribution with parameter $B_{jk}$.
 
-We will derive and explore the following three variations of the above model:
+We will derive and explore the following three variations of the above model \heejung{I'm not sure if we want to use prior/posterior in the description for the model. So I would make changes….. (1) no variation (2) Assume $B_{jk}$ is sampled from a underlying distribution $\betadist(\mu_j, \mu_j)$. (3) To account for overdispersion across sites, we allow for site-specific values for $R$, drawn from a beta
+    distribution with scale and location dependent mean and variance.}:
 \begin{enumerate}
     \item There is NO prior on $B_{jk}$, i.e., point estimates for $B_{jk}$ will be computed by maximizing the likelihood of the model.
     \item There is a prior on $B_{jk}$, $B_{jk} \sim \betadist(\mu_j, \mu_j)$.
     \item Overdispersion is accounted for by allowing for site-specific values for $R$, drawn from a beta
     distribution with scale and location dependent precisions.
 \end{enumerate}
-Specifically, the three variations are:
+Specifically, the three variations are \heejung{Comment: After mean/precision conversation with you: in your notation for beta distribution, two parameters (mean/precision) indicate $\alpha / (\alpha + \beta)$ and $\alpha + \beta$. I wouldn't use precision for $\alpha + \beta$ because precision is 1/variance. Also I would define what each parameter means for each distribution like $\alpha / (\alpha + \beta)$ and $\alpha + \beta$ for beta and $\alpha$ and $\beta$ for betabinomial.}:
 \begin{enumerate}
     \item $\begin{aligned}[t]
         Y_{njk} | T_{njk}, R_{jk} &\sim \binomial(R_{jk}; T_{njk}) \\
@@ -126,7 +149,7 @@ at different scales and locations around a specific motif.
 Let us assume that the latent variable $Z_n$ is observed to be $1$ for a set of sites. 
 Maximum likelihood estimates for the parameters in each model can be calculated by 
 maximizing the lower bound on the likelihood, obtained
-by proposing a family of posterior distributions $q(\gamma_{jk})$, using the EM algorithm.
+by proposing a family of posterior distributions $q(\gamma_{jk})$, using the EM algorithm \heejung{I won't go through your derivation. I trust you! I think it's ok to derive MLE by your way. But if we want to put this derivation into supplementary material, I would prefer to use typical EM derivation.}.
 \begin{align}
     q(\gamma_{jk}) = \bernoulli(\gammav_{jk})
 \end{align}
@@ -271,7 +294,7 @@ derived as follows.
         - B_{jk} \digamma(B_{jk}\tau_{jk}) - (1-B_{jk}) \digamma((1-B_{jk})\tau_{jk}) \right]
 \end{align}
 
-\subsection{Posterior distribution of $R_{jk}$ -- Model 2}
+\subsection{Posterior distribution of $R_{jk}$ -- Model 2}  \heejung{Ummm, actually we can calculate posterior distribution for $R_{jk}$ in all three models. I re-wrote this section in the next section. BTW, we use this posterior mean to show mean curve (not for actual inference)?}
 Following Kolaczyk (1999), the posterior distribution of $R_{jk}$ can be computed as follows
 \begin{align}
     p(R_{jk} | Y_{\cdot jk}, T_{\cdot jk})
@@ -314,12 +337,80 @@ Following the same calculation, the posterior mean can be computed as follows.
 \end{align}
 where $B(\cdot,\cdot)$ is the beta function.
 
+
+
+\subsection{Posterior distribution of $R_{jk}$}
+  
+The posterior distribution of $R_{jk}$ can be computed as follows.
+\begin{align}
+    p(R_{jk} | Y_{\cdot jk}, T_{\cdot jk})
+        &= p(R_{jk},  \gamma_{jk} = 1 | Y_{\cdot jk}, T_{\cdot jk}) + p(R_{jk},  \gamma_{jk} = 0 | Y_{\cdot jk}, T_{\cdot jk})\\
+        &= p(R_{jk}  | \gamma_{jk} =1, Y_{\cdot jk}, T_{\cdot jk})p(\gamma_{jk} =1 | Y_{\cdot jk}, T_{\cdot jk}) + p(R_{jk} | \gamma_{jk} =0, Y_{\cdot jk}, T_{\cdot jk})p(\gamma_{jk} =0 | Y_{\cdot jk}, T_{\cdot jk}) \\
+\end{align}
+where 
+\begin{align}
+	p(\gamma_{jk} =0 | Y_{\cdot jk}, T_{\cdot jk}) 
+	&= \frac{p(Y_{\cdot jk} | \gamma_{jk} =0, T_{\cdot jk})(1-\pi_j)}{p(Y_{\cdot jk} | \gamma_{jk} =1, T_{\cdot jk})\pi_j  + p(Y_{\cdot jk} | \gamma_{jk} =0, T_{\cdot jk})(1-\pi_j)} \\
+	&= 1- p(\gamma_{jk} =1 | Y_{\cdot jk}, T_{\cdot jk}).\\ 
+\end{align}
+We will derive $p(Y_{\cdot jk} | \gamma_{jk} =0, T_{\cdot jk})$, $p(Y_{\cdot jk} | \gamma_{jk} =1, T_{\cdot jk})$, $p(R_{jk}  | \gamma_{jk} =0, Y_{\cdot jk}, T_{\cdot jk})$, and $p(R_{jk}  | \gamma_{jk} =1, Y_{\cdot jk}, T_{\cdot jk})$ for each model.
+
+
+\subsubsection{Model 1}
+\begin{align}
+p(Y_{\cdot jk} | \gamma_{jk} =0, T_{\cdot jk}) 
+    &= [\prod_{n} {T_{njk} \choose Y_{njk}}] (B_{jk})^{\sum_{n}Y_{njk}} (1-B_{jk})^{\sum_{n}(T_{njk} - Y_{njk})}\\
+p(Y_{\cdot jk} | \gamma_{jk} =1, T_{\cdot jk})
+   &= [\prod_{n} {T_{njk} \choose Y_{njk}}] (\frac{1}{2})^{\sum_{n}T_{njk}}\\
+p(R_{jk}  | \gamma_{jk} =0, Y_{\cdot jk}, T_{\cdot jk}) &=  \diracdelta{B_{jk}}\\
+p(R_{jk}  | \gamma_{jk} =1, Y_{\cdot jk}, T_{\cdot jk}) &=  \diracdelta{\frac{1}{2}}\\
+\end{align}
+Then, the posterior mean can be written as
+\begin{align}
+  \expect{R_{jk} | Y_{\cdot jk}, T_{\cdot jk}}{}
+  &=  \frac{(\frac{1}{2})^{(1+\sum_{n}T_{njk})} \pi_j + (B_{jk})^{(1+\sum_{n}Y_{njk} )} (1-B_{jk})^{\sum_{n}(T_{njk} - Y_{njk})}(1-\pi_j)}{ (\frac{1}{2})^{\sum_{n}T_{njk}} \pi_j + (B_{jk})^{\sum_{n}Y_{njk}} (1-B_{jk})^{\sum_{n}(T_{njk} - Y_{njk})}(1-\pi_j)  }. \\
+\end{align}
+
+
+\subsubsection{Model 2}
+\begin{align}
+p(Y_{\cdot jk} | \gamma_{jk} =0, T_{\cdot jk}) 
+   &= [\prod_{n} {T_{njk} \choose Y_{njk}}]  \frac{B(\mu_j + \sum_{n}Y_{njk} , \mu_j   +  \sum_{n}(T_{njk} - Y_{njk})     )}{B(\mu_j,\mu_j)}\\
+p(Y_{\cdot jk} | \gamma_{jk} =1, T_{\cdot jk})
+   &= [\prod_{n} {T_{njk} \choose Y_{njk}}] (\frac{1}{2})^{\sum_{n}T_{njk}}\\
+p(R_{jk}  | \gamma_{jk} =0, Y_{\cdot jk}, T_{\cdot jk}) &=  \frac{\mu_j + \sum_{n}Y_{njk}}{2\mu_j +  \sum_{n}T_{njk}}\\
+p(R_{jk}  | \gamma_{jk} =1, Y_{\cdot jk}, T_{\cdot jk}) &=  \diracdelta{\frac{1}{2}}\\
+\end{align}
+Then, the posterior mean can be written as
+\begin{align}
+  \expect{R_{jk} | Y_{\cdot jk}, T_{\cdot jk}}{}
+  &=  \frac{(\frac{1}{2})^{(1+\sum_{n}T_{njk})} \pi_j +  \frac{B(1+\mu_j + \sum_{n}Y_{njk} , \mu_j   +  \sum_{n}(T_{njk} - Y_{njk})     )}{B(\mu_j,\mu_j)}(1-\pi_j)}{ (\frac{1}{2})^{\sum_{n}T_{njk}} \pi_j + \frac{B(\mu_j + \sum_{n}Y_{njk} , \mu_j   +  \sum_{n}(T_{njk} - Y_{njk})     )}{B(\mu_j,\mu_j)}(1-\pi_j)  }, \\
+\end{align}
+where $B(\cdot,\cdot)$ is the beta function.
+
+\subsubsection{Model 3}
+\begin{align}
+p(Y_{\cdot jk} | \gamma_{jk} =0, T_{\cdot jk}) 
+   &= \prod_{n} \int {T_{njk} \choose Y_{njk}} R_{njk}^{Y_{njk}} (1-R_{njk})^{T_{njk}-Y_{njk}} \frac{R_{njk}^{B_{jk}\tau_{jk} -1} (1-R_{njk})^{(1-B_{jk})\tau_{jk} -1}}{ B(B_{jk}\tau_{jk},(1-B_{jk})\tau_{jk})}   \mathrm{d}R_{njk} \\
+   &=  \prod_{n} {T_{njk} \choose Y_{njk}} \frac{B(B_{jk}\tau_{jk} +  Y_{njk}   ,  (1-B_{jk})\tau_{jk} +   T_{njk}-Y_{njk} )} {B(B_{jk}\tau_{jk},(1-B_{jk})\tau_{jk})}\\
+p(Y_{\cdot jk} | \gamma_{jk} =1, T_{\cdot jk})
+  &=  \prod_{n} {T_{njk} \choose Y_{njk}} \frac{B(\frac{1}{2}\tau_{jk} +  Y_{njk}   ,  \frac{1}{2}\tau_{jk} +   T_{njk}-Y_{njk} )} {B(\frac{1}{2}\tau_{jk},\frac{1}{2}\tau_{jk})}\\
+p(R_{jk}  | \gamma_{jk} =0, Y_{\cdot jk}, T_{\cdot jk}) &=  \diracdelta{B_{jk}}\\
+p(R_{jk}  | \gamma_{jk} =1, Y_{\cdot jk}, T_{\cdot jk}) &=  \diracdelta{\frac{1}{2}}\\
+\end{align}
+Then, the posterior mean can be written as
+\begin{align}
+  \expect{R_{jk} | Y_{\cdot jk}, T_{\cdot jk}}{}
+  &=  \frac{  \frac{1}{2}\pi_j \prod_{n} \frac{B(\frac{1}{2}\tau_{jk} +  Y_{njk}   ,  \frac{1}{2}\tau_{jk} +   T_{njk}-Y_{njk} )} {B(\frac{1}{2}\tau_{jk},\frac{1}{2}\tau_{jk})}   + B_{jk}(1-\pi_j) \prod_{n} \frac{B(B_{jk}\tau_{jk} +  Y_{njk}   ,  (1-B_{jk})\tau_{jk} +   T_{njk}-Y_{njk} )} {B(B_{jk}\tau_{jk},(1-B_{jk})\tau_{jk})}}{  \pi_j \prod_{n} \frac{B(\frac{1}{2}\tau_{jk} +  Y_{njk}   ,  \frac{1}{2}\tau_{jk} +   T_{njk}-Y_{njk} )} {B(\frac{1}{2}\tau_{jk},\frac{1}{2}\tau_{jk})}   + (1-\pi_j) \prod_{n} \frac{B(B_{jk}\tau_{jk} +  Y_{njk}   ,  (1-B_{jk})\tau_{jk} +   T_{njk}-Y_{njk} )} {B(B_{jk}\tau_{jk},(1-B_{jk})\tau_{jk})}} \\
+\end{align}
+
+
 \section{Centipede-PBM}
 
 Each of the above three models can be straightforwardly incorporated into CENTIPEDE's learning framework by first deriving 
 how the Poisson-Binomial model modifies the likelihood function. The key change is restricted to the multinomial part
 of CENTIPEDE's likelihood function. Here, we derive the form of the change for Model $1$, and then apply the change
-directly to Models $2$ and $3$.
+directly to Models $2$ and $3$ \heejung{Again, I won’t go through your derivation. I trust you!}.
 
 \begin{align}
     \likelihood
@@ -447,4 +538,24 @@ The gradient of the likelihood with respect to $B$ and $\tau$ can be derived as 
         - B_{jk} \digamma(B_{jk}\tau_{jk}) - (1-B_{jk}) \digamma((1-B_{jk})\tau_{jk}) \right]
 \end{align}
 
+\section{Inference}
+Inference on binding sites can be performed by using
+\begin{align}
+	\frac{\Pr(\text{binding site} | \text{data})}{\Pr(\text{not binding site} | \text{data})},
+\end{align}
+where
+\begin{align}
+	\Pr(\text{not binding site} | \text{data})
+	 &= \Pr(Z_n = 0 | X_n, T^X_n) + \Pr(Z_n = 1, \gamma_{jk} = 1 \  \forall j,k  | X_n, T^X_n)\\
+	\Pr(\text{binding site} | \text{data})
+	&= 1- \Pr(\text{not binding site} | \text{data}).
+\end{align}
+Here, 
+\begin{align}
+	\Pr(Z_n = 1, \gamma_{jk} = 1 \  \forall j,k  | X_n, T^X_n)
+	 &= \Pr(\gamma_{jk} = 1 \  \forall j,k  | Z_n = 1, X_n, T^X_n)\Pr(Z_n = 1 | X_n, T^X_n)\\
+	 &= \prod_{jk}[\Pr(\gamma_{jk} = 1 | Z_n = 1, X_n, T^X_n)]\Pr(Z_n = 1 | X_n, T^X_n).
+\end{align}
+
+ 
 \end{document}
