@@ -52,17 +52,15 @@ modelled as drawn from a multinomial distribution.
 where $X_n \in \mathbb{N}_0^L$, $T^X_n = \sum_l X_{nl}$, $\pi \in \mathbb{S}^L$, $\mathbb{S}^L$ is the standard $L$-simplex, $\pi_o = \frac{1}{L}\mathbf{1}^L$, $\mathbf{1}^L$ is the $L$-dimensional vector of ones, $\alpha, \alpha_o \in \mathbb{R}^+$, and $\tau, \tau_o \in [0,1]$. $L$ is the length of the site around the binding motif.
 
 A key limitation of this generative model is that it does not appropriately model the underlying spatially 
-structured DNase I cleavage pattern, and the associated correlation between DNase I cutting rates at two 
-different positions around the motif, induced by binding of a particular transcription factor. 
-One way to model spatially structured signals would be to place 
-a logistic-normal prior on the multinomial parameter $\pi$; the covariance matrix in the logistic-normal 
-distribution can then be estimated from the data. However, the non-conjugacy of this prior makes exact 
-inference intractable, leading us to use approximate techniques like variational inference to compute the 
-posterior probabilities of the latent variables \anil{This approach will be derived and discussed later}.
-
-Alternately, we propose to replace the multinomial part of the CENTIPEDE model with a hierarchical multi-scale poisson model. 
-Here, we describe the model and derive maximum likelihood estimators for parameters. 
-See Kolaczyk (1999) for a detailed discussion of this inhomogenous multi-scale poisson process model. 
+structured DNase I cleavage pattern induced by the binding of a particular transcription factor. 
+%One way to model spatially structured signals would be to place 
+%a logistic-normal prior on the multinomial parameter $\pi$; the covariance matrix in the logistic-normal 
+%distribution can then be estimated from the data. However, the non-conjugacy of this prior makes exact 
+%inference intractable, leading us to use approximate techniques like variational inference to compute the 
+%posterior probabilities of the latent variables \anil{This approach will be derived and discussed later}.
+We propose to replace the multinomial part of the CENTIPEDE model with a hierarchical multi-scale poisson model. 
+Here, we briefly describe the model and derive maximum likelihood estimators for parameters. 
+See Kolaczyk (1999) for a more detailed discussion of this inhomogenous multi-scale poisson process model. 
 
 \section{Poisson-Binomial Model}
 Specifically, keeping Kolaczyk's notation for the parameters, let $Y_{jk}$ be defined in terms of the data $X_l$ as
