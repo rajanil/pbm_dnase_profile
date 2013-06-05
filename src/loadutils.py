@@ -18,11 +18,13 @@ chromosomes = gdb.get_chromosomes()
 
 # load map of PWM to TF
 factormap = dict()
+controlmap = dict()
 handle = open('/mnt/lustre/home/anilraj/histmod/dat/factormap.txt','r')
 for line in handle:
     row = line.strip().split()
-    if len(row)==3:
+    if len(row)==4:
         factormap[row[0]] = row[1]
+        controlmap[row[0]] = row[2]
 handle.close()
 
 def read_individuals():
@@ -277,6 +279,16 @@ class Sequence():
         null[null==0] = 1e-8
         null = null/utils.insum(null,[1])
         return null
+
+    def get_sequences(self, locations, width=200):
+
+        # need to ensure that most locations on the forward
+        # and reverse strands are mappable
+        seqs = [utils.makestr(self.genome[loc[0]][int(loc[1])-width/2:int(loc[1])+width/2]) if loc[3]=='+' \
+            else utils.reverse_complement(utils.makestr(self.genome[loc[0]][int(loc[2])-width/2+1:int(loc[2])+width/2+1])) \
+            for loc in locations]
+
+        return seqs
 
     def close(self):
 

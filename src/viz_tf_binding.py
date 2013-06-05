@@ -35,11 +35,12 @@ def plot_footprint(footprints, labels, stderr=None, motif=None, title=None):
         subplot.plot(xvals, fwd, color=color, linestyle='-', linewidth=1, label=label, alpha=alpha)
         subplot.plot(xvals, -1*rev, color=color, linestyle='-', linewidth=1, label="_nolabel_", alpha=alpha)
         if stderr is not None:
-            subplot.fill_between(xvals, footprint[:width]-stderr[:width]/2, footprint[:width]+stderr[:width]/2, \
-                alpha=0.3, edgecolor=color, facecolor=color)
-            subplot.fill_between(xvals, -(footprint[width:]+stderr[width:]/2), \
-                -(footprint[width:]-stderr[width:]/2), alpha=0.3, edgecolor=color, \
-                facecolor=color)
+            if stderr[num] is not None:
+                subplot.fill_between(xvals, footprint[:width]-stderr[num][:width]/2, footprint[:width]+stderr[num][:width]/2, \
+                    alpha=0.3, edgecolor=color, facecolor=color)
+                subplot.fill_between(xvals, -(footprint[width:]+stderr[num][width:]/2), \
+                    -(footprint[width:]-stderr[num][width:]/2), alpha=0.3, edgecolor=color, \
+                    facecolor=color)
 
         fwdmax = max([fwdmax, fwd.max()])
         revmax = max([revmax, rev.max()])
@@ -52,6 +53,7 @@ def plot_footprint(footprints, labels, stderr=None, motif=None, title=None):
     legend = subplot.legend(loc=4)
     for text in legend.texts:
         text.set_fontsize('8')
+    legend.set_frame_on(False)
 
     if motif:
         subplot.axvline(len(motif)-1, linestyle='--', c='g', linewidth=0.2)
@@ -59,7 +61,8 @@ def plot_footprint(footprints, labels, stderr=None, motif=None, title=None):
     if motif:
         # overlap motif diagram over footprint
         motif.has_instances = False
-        tmpfile = "/mnt/lustre/home/anilraj/linspec/fig/footprints/pwmlogo.png"
+        tag = '_'.join(title.split(' / '))
+        tmpfile = "/mnt/lustre/home/anilraj/linspec/fig/footprints/pwmlogo_%s.png"%tag
         motif.weblogo(tmpfile)
         zoom = 0.15*len(motif)/15.
 
@@ -214,14 +217,18 @@ def plot_readhist(Reads, title=None):
 
     return figure 
 
-
-def plot_chipseq_posterior_correlation(readsum, bindscore, pwmscore=None, title=None):
+def plot_correlation(readsum, bindscore, pwmscore=None, xlabel='log posterior odds', ylabel='sqrt(chipseq reads)', title=None):
 
     figure = plot.figure()
     subplot = figure.add_subplot(111)
     [spine.set_linewidth(0.1) for spine in subplot.spines.values()]
 
-    subplot.scatter(bindscore, np.sqrt(readsum), s=5, c='k', marker='.', linewidth=0, label='_nolabel_', alpha=0.5)
+    # SPECIFY A COLORMAP
+    estimator = stats.gaussian_kde([bindscore, readsum])
+    density = estimator.evaluate([bindscore, readsum])
+    normdensity = np.exp(density)
+    subplot.scatter(bindscore, readsum, s=5, c=normdensity, marker='.', linewidth=0, label='_nolabel_', alpha=0.8)
+
     if pwmscore is not None:
         bounds = [(1,5),(5,9),(9,13),(13,pwmscore.max()+0.1)]
         subtitles = ['%.1f - %.1f'%(bound[0],bound[1]) for bound in bounds]
@@ -232,7 +239,7 @@ def plot_chipseq_posterior_correlation(readsum, bindscore, pwmscore=None, title=
             if index.size==0:
                 continue
             X = bindscore[index]
-            Y = np.sqrt(readsum[index])
+            Y = readsum[index]
             x,y = utils.best_fit(X,Y)
             R = stats.pearsonr(X, Y)[0]
             label = subtitle+' (%.2f)'%R
@@ -241,18 +248,68 @@ def plot_chipseq_posterior_correlation(readsum, bindscore, pwmscore=None, title=
             corr.append([stats.pearsonr(X, Y), stats.spearmanr(X, Y)])
         corr.append([stats.pearsonr(bindscore, np.sqrt(readsum)), stats.spearmanr(bindscore, np.sqrt(readsum))])
 
+    else:
+        x,y = utils.best_fit(bindscore,readsum)
+        R = stats.pearsonr(bindscore,readsum)[0]
+        label = 'r = (%.2f)'%R
+#        subplot.plot(x, y, linewidth=1, color='k', label=label, alpha=0.5)
+
+    if pwmscore is not None:
         leghandle = subplot.legend(loc=1)
         for text in leghandle.texts:
             text.set_fontsize(6)
         leghandle.set_frame_on(False)
+    subplot.axis([max([-50,bindscore.min()]), bindscore.max(), 0, readsum.max()])
 
-    subplot.axis([-50, 50, 0, np.sqrt(readsum.max())])
-
-    subplot.set_xlabel('posterior logodds', fontsize=8)
+    subplot.set_xlabel(xlabel, fontsize=8)
     for tick in subplot.get_xticklabels():
         tick.set_fontsize(8)
 
-    subplot.set_ylabel('sqrt(chipseq reads)', fontsize=8)
+    subplot.set_ylabel(ylabel, fontsize=8)
+    for tick in subplot.get_yticklabels():
+        tick.set_fontsize(8)
+
+    if title:
+        plot.suptitle(title+'; %s'%label, fontsize=10)
+
+    return figure
+
+def plot_auc(Values, positive, negative, labels=None, title=None):
+
+    ilabels = np.zeros((positive.sum()+negative.sum(),),dtype=float)
+    ilabels[:positive.sum()] = 1
+    TPR = []
+    FPR = []
+    for allvalues in Values:
+        values = np.hstack((allvalues[positive],allvalues[negative]))
+        sorted = np.sort(values)[::-1]
+        tpr = np.zeros((values.size,),dtype=float)
+        fpr = np.zeros((values.size,),dtype=float)
+        for i,value in enumerate(sorted):
+            pos = ilabels[values>=value]
+            fpr[i] = (pos==0).sum()/float((ilabels==0).sum())
+            tpr[i] = (pos==1).sum()/float((ilabels==1).sum())
+        TPR.append(tpr)
+        FPR.append(fpr)
+
+    figure = plot.figure()
+    subplot = figure.add_subplot(111)
+    subplot = vizutils.remove_spines(subplot)
+    for tpr,fpr,color,label in zip(TPR,FPR,colors,labels):
+        subplot.plot(fpr, tpr, color=color, linewidth=1, label=label)
+    subplot.plot([0,1],[0,1], color='k', linewidth=1, alpha=0.5)
+
+    leghandle = subplot.legend(loc=4)
+    for text in leghandle.texts:
+        text.set_fontsize(6)
+    leghandle.set_frame_on(False)
+    subplot.axis([0,1,0,1])
+
+    subplot.set_xlabel('1-Specificity', fontsize=8)
+    for tick in subplot.get_xticklabels():
+        tick.set_fontsize(8)
+
+    subplot.set_ylabel('Sensitivity', fontsize=8)
     for tick in subplot.get_yticklabels():
         tick.set_fontsize(8)
 

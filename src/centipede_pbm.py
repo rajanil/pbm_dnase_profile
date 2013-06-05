@@ -64,7 +64,7 @@ class Cascade:
 class Eta():
 
     def __init__(self, cascade, totalreads, scores, gamma=None, beta=None, \
-        pi=None, mu=None, B=None, omega=None, alpha=None, tau=None):
+        pi=None, mu=None, B=None, omega=None, omegao=None, alpha=None, tau=None):
 
         self.N = cascade.N
         self.total = totalreads.reshape(self.N,1)
@@ -82,11 +82,14 @@ class Eta():
             elif gamma.model=='modelB':
                 lhoodA, lhoodB = likelihoodAB(cascade, mu=mu, model=gamma.model)
             elif gamma.model=='modelC':
-                lhoodA, lhoodB = likelihoodAB(cascade, B=B, omega=omega, model=gamma.model)
+                lhoodA, lhoodB, lhoodC = likelihoodAB(cascade, B=B, omega=omega, omegao=omegao, model=gamma.model)
 
             for j in xrange(pi.J):
-                footprint_logodds += insum((1-gamma.value[j])*(lhoodB.value[j]-lhoodA.value[j]) \
-                    + gamma.value[j]*(nplog(pi.estim[j])-nplog(gamma.value[j])) \
+                if model=='modelC':
+                    footprint_logodds += insum(gamma.value[j]*lhoodA.value[j]-lhoodC.value[j]+(1-gamma.value[j])*lhoodB.value[j],[1])
+                else:
+                    footprint_logodds += insum((1-gamma.value[j])*(lhoodB.value[j]-lhoodA.value[j]),[1])
+                footprint_logodds += insum(gamma.value[j]*(nplog(pi.estim[j])-nplog(gamma.value[j])) \
                     + (1-gamma.value[j])*(nplog(1-pi.estim[j])-nplog(1-gamma.value[j])),[1])
 
             self.estim[:,1:] = beta.estim[0] + beta.estim[1]*scores + footprint_logodds \
@@ -102,7 +105,7 @@ class Eta():
         else:
             self.estim[:,1:] = self.estim[:,1:]/np.log(10)
 
-    def update_Estep(self, cascade, scores, alpha, beta, tau, pi, gamma, mu=None, B=None, omega=None): 
+    def update_Estep(self, cascade, scores, alpha, beta, tau, pi, gamma, mu=None, B=None, omega=None, omegao=None): 
 
         footprint_logodds = np.zeros((self.N,1),dtype=float)
         if gamma.model=='modelA':
@@ -110,7 +113,7 @@ class Eta():
         elif gamma.model=='modelB':
             lhoodA, lhoodB = likelihoodAB(cascade, mu=mu, model=gamma.model)
         elif gamma.model=='modelC':
-            lhoodA, lhoodB = likelihoodAB(cascade, B=B, omega=omega, model=gamma.model)
+            lhoodA, lhoodB, lhoodC = likelihoodAB(cascade, B=B, omega=omega, omegao=omegao, model=gamma.model)
 
         for j in xrange(pi.J):
             footprint_logodds += insum((1-gamma.value[j])*(lhoodB.value[j]-lhoodA.value[j]) \
@@ -143,14 +146,14 @@ class Gamma(Cascade):
         self.value = dict([(j,np.random.rand(2**j)) for j in xrange(self.J)])
         self.model = model
 
-    def update_Estep(self, cascade, eta, pi, mu=None, B=None, omega=None):
+    def update_Estep(self, cascade, eta, pi, mu=None, B=None, omega=None, omegao=None):
 
         if self.model=='modelA':
             lhoodA, lhoodB = likelihoodAB(cascade, B=B, model=self.model)
         elif self.model=='modelB':
             lhoodA, lhoodB = likelihoodAB(cascade, mu=mu, model=self.model)
         elif self.model=='modelC':
-            lhoodA, lhoodB = likelihoodAB(cascade, B=B, omega=omega, model=self.model)
+            lhoodA, lhoodB, lhoodC = likelihoodAB(cascade, B=B, omega=omega, omegao=omegao, model=self.model)
 
         for j in xrange(self.J):
             log_posterior_odds = nplog(pi.estim[j]) - nplog(1-pi.estim[j]) \
@@ -264,7 +267,7 @@ class Omega(Cascade):
         Cascade.__init__(self, L)
         self.value = dict([(j,10*np.random.rand(2**j)) for j in xrange(self.J)])
 
-    def update_Mstep(self, cascade, gamma, B):
+    def update_Mstep(self, cascade, eta, gamma, B):
 
         def F(x):
             func = 0
@@ -298,6 +301,50 @@ class Omega(Cascade):
                     + (1-B.value[j])*digamma(cascade.total[j]-cascade.value[j]+(1-B.value[j])*x[left:right]) \
                     - digamma(cascade.total[j]+x[left:right]) + digamma(x[left:right]) \
                     - B.value[j]*digamma(B.value[j]*x[left:right]) - (1-B.value[j])*digamma((1-B.value[j])*x[left:right])),0)
+            Df = -1.*df.ravel()
+            if np.isnan(Df).any() or np.isinf(Df).any():
+                return np.inf*np.ones(x.shape,dtype=float)
+            else:
+                return Df
+
+        xo = np.array([v for j in xrange(self.J) for v in self.value[j]])
+        bounds = [(0, None) for i in xrange(xo.size)]
+        solution = opt.fmin_l_bfgs_b(F, xo, fprime=Fprime, bounds=bounds, disp=0)
+        self.value = dict([(j,solution[0][2**j-1:2**(j+1)-1]) for j in xrange(self.J)])
+
+class OmegaO(Cascade):
+
+    def __init__(self, L):
+
+        Cascade.__init__(self, L)
+        self.value = dict([(j,10*np.random.rand(2**j)) for j in xrange(self.J)])
+
+    def update_Mstep(self, cascade, eta):
+
+        def F(x):
+            func = 0
+            for j in xrange(self.J):
+                left = 2**j-1
+                right = 2**(j+1)-1
+                func = func + np.sum(eta.estim[:,:1]*(gammaln(cascade.value[j]+0.5*x[left:right]) \
+                    + gammaln(cascade.total[j]-cascade.value[j]+0.5*x[left:right]) \
+                    - gammaln(cascade.total[j]+x[left:right]) + gammaln(x[left:right]) \
+                    - 2*gammaln(0.5*x[left:right])))
+            f = -1.*func.sum()
+            if np.isnan(f) or np.isinf(f):
+                return np.inf
+            else:
+                return f
+
+        def Fprime(x):
+            df = np.zeros(x.shape, dtype=float)
+            for j in xrange(self.J):
+                left = 2**j-1
+                right = 2**(j+1)-1
+                df[left:right] = 0.5*np.sum(eta.estim[:,:1]*(digamma(cascade.value[j]+0.5*x[left:right]) \
+                    + digamma(cascade.total[j]-cascade.value[j]+0.5*x[left:right]) \
+                    - 2*digamma(cascade.total[j]+x[left:right]) + 2*digamma(x[left:right]) \
+                    - 2*digamma(0.5*x[left:right])),0)
             Df = -1.*df.ravel()
             if np.isnan(Df).any() or np.isinf(Df).any():
                 return np.inf*np.ones(x.shape,dtype=float)
@@ -428,10 +475,12 @@ class Beta():
             print "Inf in Beta"
             raise ValueError
 
-def likelihoodAB(cascade, mu=None, B=None, omega=None, model='modelB'):
+def likelihoodAB(cascade, mu=None, B=None, omega=None, omegao=None, model='modelB'):
 
     lhoodA = Cascade(cascade.L)
     lhoodB = Cascade(cascade.L)
+    if model=='modelC':
+        lhoodC = Cascade(cascade.L)
 
     for j in xrange(cascade.J):
         if model=='modelA':
@@ -450,10 +499,15 @@ def likelihoodAB(cascade, mu=None, B=None, omega=None, model='modelB'):
                     + gammaln(cascade.total[j]-cascade.value[j]+(1-B.value[j])*omega.value[j]) \
                     - gammaln(cascade.total[j]+omega.value[j]) + gammaln(omega.value[j]) - gammaln(B.value[j]*omega.value[j]) \
                     - gammaln((1-B.value[j])*omega.value[j])
+            lhoodC.value[j] = gammaln(cascade.value[j]+0.5*omegao.value[j]) + gammaln(cascade.total[j]-cascade.value[j]+0.5*omegao.value[j]) \
+                    - gammaln(cascade.total[j]+omegao.value[j]) + gammaln(omegao.value[j]) - 2*gammaln(0.5*omegao.value[j])
 
-    return lhoodA, lhoodB
+    if model=='modelC':
+        return lhoodA, lhoodB, lhoodC
+    else:
+        return lhoodA, lhoodB
 
-def likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, mu=None, B=None, omega=None):
+def likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, mu=None, B=None, omega=None, omegao=None):
 
     apriori = beta.estim[0] + beta.estim[1]*scores
 
@@ -462,7 +516,7 @@ def likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, mu=None, B=Non
     elif gamma.model=='modelB':
         lhoodA, lhoodB = likelihoodAB(cascade, mu=mu, model=gamma.model)
     elif gamma.model=='modelC':
-        lhoodA, lhoodB = likelihoodAB(cascade, B=B, omega=omega, model=gamma.model)
+        lhoodA, lhoodB, lhoodC = likelihoodAB(cascade, B=B, omega=omega, omegao=omegao, model=gamma.model)
 
     footprint = np.zeros((cascade.N,1),dtype=float)
     for j in xrange(pi.J):
@@ -477,7 +531,10 @@ def likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, mu=None, B=Non
 
     null = np.zeros((cascade.N,1),dtype=float)
     for j in xrange(cascade.J):
-        null = null + insum(lhoodA.value[j],[1])
+        if gamma.model=='modelC':
+            null = null + insum(lhoodC.value[j],[1])
+        else:
+            null = null + insum(lhoodA.value[j],[1])
     P_0 = null + gammaln(eta.total+alpha.estim[0]) - gammaln(alpha.estim[0]) \
         + alpha.estim[0]*nplog(tau.estim[0]) + eta.total*nplog(1-tau.estim[0])
     P_0[P_0==np.inf] = MAX
@@ -498,26 +555,53 @@ def likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, mu=None, B=Non
 
     return L
 
-def bayes_optimal_estimator(cascade, eta, pi, mu):
-
+def bayes_optimal_estimator(cascade, eta, pi, B=None, mu=None, model='modelA'):
     """
     computes the posterior mean conditional on the most likely
     set of states for gamma.
     """
 
-    R = Cascade(cascade.L)
-    states = eta.estim[:,1:]>0.5
-    for j in range(pi.J):
-        ratio = nplog(1-pi.estim[j]) - nplog(pi.estim[j]) + gammaln((cascade.value[j]*states).sum(0)+mu.estim[j]) \
-            + gammaln((cascade.total[j]*states).sum(0)-(cascade.value[j]*states).sum(0)+mu.estim[j]) \
-            - gammaln((cascade.total[j]*states).sum(0)+2*mu.estim[j]) \
-            + gammaln(2*mu.estim[j]) - 2*gammaln(mu.estim[j]) - (cascade.total[j]*states).sum(0)*nplog(0.5)
-        R.value[j] = 0.5*newlogistic(ratio) \
-            + ((cascade.value[j]*states).sum(0)+mu.estim[j])/((cascade.total[j]*states).sum(0)+mu.estim[j])*newlogistic(-ratio)
+    M1 = Cascade(cascade.L)
+    M2 = Cascade(cascade.L)
+    if isinstance(eta, Eta):
+        states = eta.estim[:,1:]>0.5
+    else:
+        states = eta[:,1:]
 
-    return R
+    if not isinstance(pi, Pi):
+        pitmp = Pi(cascade.J)
+        pitmp.estim = pi
+        pi = pitmp
 
-def EM(reads, totalreads, scores, null, model='modelA', restarts=3, mintol=1):
+    if model=='modelA':
+        for j in range(pi.J):
+            ratio = nplog(1-pi.estim[j]) - nplog(pi.estim[j]) + (cascade.value[j]*states).sum(0)*nplog(B.value[j]) \
+                + ((cascade.total[j]-cascade.value[j])*states).sum(0)*nplog(1-B.value[j]) \
+                - (cascade.total[j]*states).sum(0)*nplog(0.5)
+            M1.value[j] = 0.5*newlogistic(ratio) + B.value[j]*newlogistic(-ratio)
+            M2.value[j] = 0.25*newlogistic(ratio) + B.value[j]**2*newlogistic(-ratio)
+    elif model=='modelB':
+        if not isinstance(mu, Mu):
+            mutmp = Mu(cascade.J)
+            mutmp.estim = mu
+            mu = mutmp
+
+        for j in range(pi.J):
+            ratio = nplog(1-pi.estim[j]) - nplog(pi.estim[j]) + gammaln((cascade.value[j]*states).sum(0)+mu.estim[j]) \
+                + gammaln((cascade.total[j]*states).sum(0)-(cascade.value[j]*states).sum(0)+mu.estim[j]) \
+                - gammaln((cascade.total[j]*states).sum(0)+2*mu.estim[j]) \
+                + gammaln(2*mu.estim[j]) - 2*gammaln(mu.estim[j]) - (cascade.total[j]*states).sum(0)*nplog(0.5)
+            M1.value[j] = 0.5*newlogistic(ratio) \
+                + ((cascade.value[j]*states).sum(0)+mu.estim[j])/((cascade.total[j]*states).sum(0)+mu.estim[j])*newlogistic(-ratio)
+            M2.value[j] = 0.25*newlogistic(ratio) \
+                + ((cascade.value[j]*states).sum(0)+mu.estim[j]+1)/((cascade.total[j]*states).sum(0)+mu.estim[j]+1) \
+                * ((cascade.value[j]*states).sum(0)+mu.estim[j])/((cascade.total[j]*states).sum(0)+mu.estim[j])*newlogistic(-ratio)
+    elif model=='modelC':
+        raise NotImplementedError
+
+    return M1, M2
+
+def EM(reads, totalreads, scores, null, model='modelA', restarts=3, mintol=1.):
 
     (N,L) = reads.shape
     cascade = Cascade(L)
@@ -539,6 +623,7 @@ def EM(reads, totalreads, scores, null, model='modelA', restarts=3, mintol=1):
             elif gamma.model=='modelC':
                 B = Bin(L, model=model)
                 omega = Omega(L)
+                omegao = OmegaO(L)
             alpha = Alpha()
             tau = Tau()
             beta = Beta()
@@ -548,77 +633,12 @@ def EM(reads, totalreads, scores, null, model='modelA', restarts=3, mintol=1):
             elif model=='modelB':
                 Loglike = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, mu=mu)
             elif model=='modelC':
-                Loglike = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B, omega=omega)
+                Loglike = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B, omega=omega, omegao=omegao)
             tol = 10.
             iter = 0
             itertime = time.time()
 
             while np.abs(tol)>mintol:
-
-                # M step
-                pi.update_Mstep(gamma)
-#                if model=='modelA':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B)
-#                elif model=='modelB':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, mu=mu)
-#                elif model=='modelC':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B, omega=omega)
-#                print 'Pi', Loglikenew-Loglike
-#                tol = Loglikenew-Loglike
-#                Loglike = Loglikenew
-
-#                mu.update_Mstep(cascade, eta, gamma)
-                beta.update_Mstep(scores, eta)
-#                if model=='modelA':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B)
-#                elif model=='modelB':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, mu=mu)
-#                elif model=='modelC':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B, omega=omega)
-#                print 'Beta', Loglikenew-Loglike
-#                tol += Loglikenew-Loglike
-#                Loglike = Loglikenew
-
-                tau.update_Mstep(eta, alpha)
-#                if model=='modelA':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B)
-#                elif model=='modelB':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, mu=mu)
-#                elif model=='modelC':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B, omega=omega)
-#                print 'Tau', Loglikenew-Loglike
-#                tol += Loglikenew-Loglike
-#                Loglike = Loglikenew
-
-                alpha.update_Mstep(eta, tau)
-#                if model=='modelA':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B)
-#                elif model=='modelB':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, mu=mu)
-#                elif model=='modelC':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B, omega=omega)
-#                print 'Alpha', Loglikenew-Loglike
-#                tol += Loglikenew-Loglike
-#                Loglike = Loglikenew
-
-                if model=='modelA':
-                    B.update_Mstep(cascade, eta, gamma)
-                elif model=='modelB':
-                    pass
-#                    mu.update_Mstep(cascade, eta, gamma)
-                elif model=='modelC':
-                    B.update_Mstep(cascade, eta, gamma, omega=omega)
-                    omega.update_Mstep(cascade, gamma, B)
-#                if model=='modelA':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B)
-#                elif model=='modelB':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, mu=mu)
-#                elif model=='modelC':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B, omega=omega)
-#                print 'Bin', Loglikenew-Loglike
-#                tol += Loglikenew-Loglike
-#                Loglike = Loglikenew
-
 
                 # E step
                 if model=='modelA':
@@ -626,33 +646,29 @@ def EM(reads, totalreads, scores, null, model='modelA', restarts=3, mintol=1):
                 elif model=='modelB':
                     eta.update_Estep(cascade, scores, alpha, beta, tau, pi, gamma, mu=mu)
                 elif model=='modelC':
-                    eta.update_Estep(cascade, scores, alpha, beta, tau, pi, gamma, B=B, omega=omega)
-#                if model=='modelA':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B)
-#                elif model=='modelB':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, mu=mu)
-#                elif model=='modelC':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B, omega=omega)
-#                print 'Eta', Loglikenew-Loglike
-#                tol += Loglikenew-Loglike
-#                Loglike = Loglikenew
+                    eta.update_Estep(cascade, scores, alpha, beta, tau, pi, gamma, B=B, omega=omega, omegao=omegao)
 
                 if model=='modelA':
                     gamma.update_Estep(cascade, eta, pi, B=B)
                 elif model=='modelB':
                     gamma.update_Estep(cascade, eta, pi, mu=mu)
                 elif model=='modelC':
-                    gamma.update_Estep(cascade, eta, pi, B=B, omega=omega)
-#                if model=='modelA':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B)
-#                elif model=='modelB':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, mu=mu)
-#                elif model=='modelC':
-#                    Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B, omega=omega)
-#                print 'Gamma', Loglikenew-Loglike
-#                tol += Loglikenew-Loglike
-#                Loglike = Loglikenew
+                    gamma.update_Estep(cascade, eta, pi, B=B, omega=omega, omegao=omegao)
 
+                # M step
+                pi.update_Mstep(gamma)
+                beta.update_Mstep(scores, eta)
+                tau.update_Mstep(eta, alpha)
+                alpha.update_Mstep(eta, tau)
+                if model=='modelA':
+                    B.update_Mstep(cascade, eta, gamma)
+                elif model=='modelB':
+                    pass
+#                    mu.update_Mstep(cascade, eta, gamma)
+                elif model=='modelC':
+                    B.update_Mstep(cascade, eta, gamma, omega=omega)
+                    omega.update_Mstep(cascade, eta, gamma, B)
+                    omegao.update_Mstep(cascade, eta)
 
                 # likelihood
                 if (iter+1)%1==0:
@@ -661,7 +677,7 @@ def EM(reads, totalreads, scores, null, model='modelA', restarts=3, mintol=1):
                     elif model=='modelB':
                         Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, mu=mu)
                     elif model=='modelC':
-                        Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B, omega=omega)
+                        Loglikenew = likelihood(cascade, scores, eta, gamma, pi, alpha, beta, tau, B=B, omega=omega, omegao=omegao)
                     tol = Loglikenew - Loglike
                     print iter+1, Loglikenew, tol, time.time()-itertime
                     print beta.estim, alpha.estim*(1-tau.estim)/tau.estim, np.sum(eta.estim[:,0]<0.01)
@@ -671,17 +687,15 @@ def EM(reads, totalreads, scores, null, model='modelA', restarts=3, mintol=1):
                 iter += 1
 
             negbinmeans = alpha.estim*(1-tau.estim)/tau.estim
-            if negbinmeans[0]<negbinmeans[1]:
+            if negbinmeans[0]<negbinmeans[1] or negbinmeans[0]>=negbinmeans[1]:
                 restart += 1
                 if Loglike>Loglikeres:
                     Loglikeres = Loglike
                     posterior = eta.estim
                     if model=='modelA':
-                        footprint = (gamma, pi.estim, B)
+                        footprint = (gamma, pi, B)
                     elif model=='modelB':
-                        bayesestim = bayes_optimal_estimator(cascade, eta, pi, mu)
-                        footprint = bayesestim.inverse_transform()
-                        footprint = (footprint, gamma, pi.estim, mu.estim)
+                        footprint = (None, gamma, pi, mu)
                     elif model=='modelC':
                         footprint = (gamma, pi.estim, B, omega)
                     negbinparams = (alpha.estim, tau.estim)
@@ -690,7 +704,6 @@ def EM(reads, totalreads, scores, null, model='modelA', restarts=3, mintol=1):
         except ValueError as err:
 
             print "restarting inference"
-            pdb.set_trace()
 
     return posterior, footprint, negbinparams, prior
 
