@@ -22,23 +22,26 @@ for file in files:
     for line in handle:
         row = line.strip().split()
         try:
-            logodds[row[0]].append([eval(row[2]+row[3])[0], eval(row[4]+row[5])[0]])
-            dnase[row[0]].append([eval(row[6]+row[7])[0], eval(row[8]+row[9])[0]])
-            auc[row[0]].append(eval(row[10]+row[11])[0])
-            tpr[row[0]].append(float(row[12]))
+            logodds[row[0]].append([eval(row[2]+row[3])[0], eval(row[4]+row[5])[0], eval(row[10]+row[11])[0], eval(row[12]+row[13])[0]])
+            dnase[row[0]].append([eval(row[6]+row[7])[0], eval(row[8]+row[9])[0], eval(row[14]+row[15])[0], eval(row[16]+row[17])[0]])
+            auc[row[0]].append(eval(row[18]+row[19])[0])
+            tpr[row[0]].append(float(row[20]))
         except KeyError:
-            logodds[row[0]] = [[eval(row[2]+row[3])[0], eval(row[4]+row[5])[0]]]
-            dnase[row[0]] = [[eval(row[6]+row[7])[0], eval(row[8]+row[9])[0]]]
-            auc[row[0]] = [eval(row[10]+row[11])[0]]
-            tpr[row[0]] = [float(row[12])]
-
+            logodds[row[0]] = [[eval(row[2]+row[3])[0], eval(row[4]+row[5])[0], eval(row[10]+row[11])[0], eval(row[12]+row[13])[0]]]
+            dnase[row[0]] = [[eval(row[6]+row[7])[0], eval(row[8]+row[9])[0], eval(row[14]+row[15])[0], eval(row[16]+row[17])[0]]]
+            auc[row[0]] = [eval(row[18]+row[19])[0]]
+            tpr[row[0]] = [float(row[20])]
 
 factors = logodds.keys()
-factors = [f for f in factors if not (np.array(logodds[f])[:,0]<0).any()]
+factors = [f for f in factors if not ((np.array(logodds[f])[:,0]<0).any() or (np.array(logodds[f])[:,2]<0).any())]
 L = np.array([logodds[f] for f in factors if not np.nan in logodds[f]])[:,order,:]
 D = np.array([dnase[f] for f in factors if not np.nan in dnase[f]])[:,order,:]
 A = np.array([auc[f] for f in factors if not np.nan in auc[f]])[:,order]
 T = np.array([tpr[f] for f in factors if not np.nan in tpr[f]])[:,order]
+
+handle = open('/Users/anilraj/work/pbm_dnase_profile/fig/plot_%s.txt'%sample,'r')
+BvT = dict([(line.strip().split()[0],map(int,line.strip().split()[-2:])) \
+        for line in handle if line.strip().split()[1]=='modelB' and line.strip().split()[0] in factors])
 
 # plot comparing logodds correlation
 pdfhandle = PdfPages('/Users/anilraj/work/pbm_dnase_profile/fig/%s_logodds.pdf'%sample)
@@ -56,7 +59,13 @@ for m,model in enumerate(models[2:]):
                 color = colors[0]
         except IndexError:
             pdb.set_trace()
-        subplot.plot([val[0],val[0]], [val[1],val[m+2]], color=color, linewidth=1, alpha=0.5)
+        if BvT[factors[i]][0]==BvT[factors[i]][1]:
+            linewidth = 2
+            alpha = 1
+        else:
+            linewidth = 1
+            alpha = 0.5
+        subplot.plot([val[0],val[0]], [val[1],val[m+2]], color=color, linewidth=linewidth, alpha=alpha)
 
     subplot.set_xlabel('Pearson R (%s)'%models[0])
     subplot.set_ylabel('Pearson R (%s / %s )'%(models[1],model))
@@ -87,7 +96,14 @@ for i,val in enumerate(L[:,:,0]):
             color = colors[0]
     except IndexError:
         pdb.set_trace()
-    subplot.plot([val[0],val[0]], [val[2],val[-1]], color=color, linewidth=1, alpha=0.5)
+    if BvT[factors[i]][0]==BvT[factors[i]][1]:
+        linewidth = 2
+        alpha = 1
+        print factors[i]
+    else:
+        linewidth = 1
+        alpha = 0.5
+    subplot.plot([val[0],val[0]], [val[2],val[-1]], color=color, linewidth=linewidth, alpha=alpha)
 subplot.set_xlabel('Pearson R (%s)'%models[0])
 subplot.set_ylabel('Pearson R (%s / %s )'%(models[2],models[-1]))
 xmin = L[:,[0,2,-1],0].min()
@@ -121,6 +137,100 @@ figure.suptitle('Dnase-vs-ChipSeq correlations')
 pdfhandle.savefig(figure)
 pdfhandle.close()
 
+# correlation plots conditional on logodds>0
+# plot comparing logodds correlation
+pdfhandle = PdfPages('/Users/anilraj/work/pbm_dnase_profile/fig/%s_logoddscond.pdf'%sample)
+for m,model in enumerate(models[2:]):
+
+    figure = plot.figure()
+    subplot = figure.add_subplot(111)
+    subplot.scatter(L[:,0,2], L[:,1,2], s=15, color=colors[3], marker='o', label=models[1])
+    subplot.scatter(L[:,0,2], L[:,m+2,2], s=15, color=colors[1], marker='o', label=model)
+    for i,val in enumerate(L[:,:,2]):
+        try:
+            if val[m+2]>=val[1]:
+                color = colors[2]
+            else:
+                color = colors[0]
+        except IndexError:
+            pdb.set_trace()
+        if BvT[factors[i]][0]==BvT[factors[i]][1]:
+            linewidth = 2
+            alpha = 1
+        else:
+            linewidth = 1
+            alpha = 0.5
+        subplot.plot([val[0],val[0]], [val[1],val[m+2]], color=color, linewidth=linewidth, alpha=alpha)
+
+    subplot.set_xlabel('Pearson R (%s)'%models[0])
+    subplot.set_ylabel('Pearson R (%s / %s )'%(models[1],model))
+    xmin = L[:,[0,1,m+2],2].min()
+    xmax = L[:,[0,1,m+2],2].max()
+    ymin = L[:,[0,1,m+2],2].min()
+    ymax = L[:,[0,1,m+2],2].max()
+    subplot.axis([xmin, xmax, ymin, ymax])
+    subplot.plot([xmin,xmax],[ymin,ymax],c='k',alpha=0.5)
+
+    legend = subplot.legend(loc=2)
+    for text in legend.texts:
+        text.set_fontsize('8')
+    legend.set_frame_on(False)
+
+    figure.suptitle('comparing the LogPosteriorOdds-vs-ChipSeq correlations')
+    pdfhandle.savefig(figure)
+
+figure = plot.figure()
+subplot = figure.add_subplot(111)
+subplot.scatter(L[:,0,2], L[:,2,2], s=15, color=colors[3], marker='o', label=models[1])
+subplot.scatter(L[:,0,2], L[:,-1,2], s=15, color=colors[1], marker='o', label=model)
+for i,val in enumerate(L[:,:,2]):
+    try:
+        if val[-1]>=val[2]:
+            color = colors[2]
+        else:
+            color = colors[0]
+    except IndexError:
+        pdb.set_trace()
+    if BvT[factors[i]][0]==BvT[factors[i]][1]:
+        linewidth = 2
+        alpha = 1
+    else:
+        linewidth = 1
+        alpha = 0.5
+    subplot.plot([val[0],val[0]], [val[2],val[-1]], color=color, linewidth=linewidth, alpha=alpha)
+subplot.set_xlabel('Pearson R (%s)'%models[0])
+subplot.set_ylabel('Pearson R (%s / %s )'%(models[2],models[-1]))
+xmin = L[:,[0,2,-1],2].min()
+xmax = L[:,[0,2,-1],2].max()
+ymin = L[:,[0,2,-1],2].min()
+ymax = L[:,[0,2,-1],2].max()
+subplot.axis([xmin, xmax, ymin, ymax])
+subplot.plot([xmin,xmax],[ymin,ymax],c='k',alpha=0.5)
+
+legend = subplot.legend(loc=2)
+for text in legend.texts:
+    text.set_fontsize('8')
+legend.set_frame_on(False)
+
+figure.suptitle('comparing the LogPosteriorOdds-vs-ChipSeq correlations')
+pdfhandle.savefig(figure)
+
+figure = plot.figure()
+subplot = figure.add_subplot(111)
+subplot.scatter(L[:,-1,2], D[:,0,2], s=15, color=colors[1], marker='o')
+subplot.set_xlabel('Pearson R (%s)'%models[-1])
+subplot.set_ylabel('Pearson R (dnase-vs-chipseq)')
+xmin = min([D[:,0,2].min(),L[:,0,2].min()])
+xmax = max([D[:,0,2].max(),L[:,0,2].max()])
+ymin = min([D[:,0,2].min(),L[:,0,2].min()])
+ymax = max([D[:,0,2].max(),L[:,0,2].max()])
+subplot.axis([xmin, xmax, ymin, ymax])
+subplot.plot([xmin,xmax],[ymin,ymax],c='k',alpha=0.5)
+
+figure.suptitle('Dnase-vs-ChipSeq correlations')
+pdfhandle.savefig(figure)
+pdfhandle.close()
+
 # plot comparing logodds correlation
 pdfhandle = PdfPages('/Users/anilraj/work/pbm_dnase_profile/fig/%s_auc.pdf'%sample)
 for m,model in enumerate(models[2:]):
@@ -134,7 +244,13 @@ for m,model in enumerate(models[2:]):
             color = colors[2]
         else:
             color = colors[0]
-        subplot.plot([val[0],val[0]], [val[1],val[m+2]], color=color, linewidth=1, alpha=0.5)
+        if BvT[factors[i]][0]==BvT[factors[i]][1]:
+            linewidth = 2
+            alpha = 1
+        else:
+            linewidth = 1
+            alpha = 0.5
+        subplot.plot([val[0],val[0]], [val[1],val[m+2]], color=color, linewidth=linewidth, alpha=alpha)
 
     subplot.set_xlabel('auROC (%s)'%models[0])
     subplot.set_ylabel('auROC (%s / %s )'%(models[1],model))
@@ -163,7 +279,13 @@ for val in A:
         color = colors[2]
     else:
         color = colors[0]
-    subplot.plot([val[0],val[0]], [val[2],val[-1]], color=color, linewidth=1, alpha=0.5)
+    if BvT[factors[i]][0]==BvT[factors[i]][1]:
+        linewidth = 2
+        alpha = 1
+    else:
+        linewidth = 1
+        alpha = 0.5
+    subplot.plot([val[0],val[0]], [val[2],val[-1]], color=color, linewidth=linewidth, alpha=alpha)
 
 subplot.set_xlabel('auROC (%s)'%models[0])
 subplot.set_ylabel('auROC (%s / %s )'%(models[2],models[-1]))
@@ -199,7 +321,13 @@ for m,model in enumerate(models[2:]):
             color = colors[2]
         else:
             color = colors[0]
-        subplot.plot([val[0],val[0]], [val[1],val[m+2]], color=color, linewidth=1, alpha=0.5)
+        if BvT[factors[i]][0]==BvT[factors[i]][1]:
+            linewidth = 2
+            alpha = 1
+        else:
+            linewidth = 1
+            alpha = 0.5
+        subplot.plot([val[0],val[0]], [val[1],val[m+2]], color=color, linewidth=linewidth, alpha=alpha)
 
     subplot.set_xlabel('TPR @ 1 FPR (%s)'%models[0])
     subplot.set_ylabel('TPR @ 1 FPR (%s / %s )'%(models[1],model))
@@ -227,7 +355,13 @@ for val in T:
         color = colors[2]
     else:
         color = colors[0]
-    subplot.plot([val[0],val[0]], [val[2],val[-1]], color=color, linewidth=1, alpha=0.5)
+    if BvT[factors[i]][0]==BvT[factors[i]][1]:
+        linewidth = 2
+        alpha = 1
+    else:
+        linewidth = 1
+        alpha = 0.5
+    subplot.plot([val[0],val[0]], [val[2],val[-1]], color=color, linewidth=linewidth, alpha=alpha)
 
 subplot.set_xlabel('TPR @ 1 FPR (%s)'%models[0])
 subplot.set_ylabel('TPR @ 1 FPR (%s / %s )'%(models[2],models[-1]))
