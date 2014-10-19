@@ -54,6 +54,9 @@ mkdir res_Rep2
 
 /data/tools/R-3.1.1/bin/Rscript bam2rdata.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/Rep2.RData ~anilraj/histmod/cache/PIQdata/Gm12878_Rep2.sort.bam
 
+/data/tools/R-3.1.1/bin/Rscript bam2rdata.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/multi.RData ~anilraj/histmod/cache/PIQdata/Gm12878_Rep1.sort.bam ~anilraj/histmod/cache/PIQdata/Gm12878_Rep2.sort.bam
+
+
 ### step 3:run PIQ
 
 /data/tools/R-3.1.1/bin/Rscript pertf.r common.r /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/motifsites/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/tmp/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/res_pooled/ /mnt/lustre/home/shim/pbm_dnase_profile/analysis/piq/readfiles/pooled.RData XXX
@@ -66,7 +69,7 @@ mkdir res_Rep2
 
 ### run all together
 grep ^S[0-9] ~anilraj/histmod/dat/factormap.txt | awk '{print $1}' | cut -c2- | while read line; do qsubsh runpiq.sh 10g $line; done
-
+grep ^S[0-9] ~anilraj/histmod/dat/factormap.txt | awk '{print $1}' | cut -c2- | while read line; do qsubsh runpiq_multi.sh 10g $line; done
 
 
 
